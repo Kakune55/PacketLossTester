@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>网络丢包率测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f0f0;
+        }
+
+        #app {
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 80%;
+            max-width: 600px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        input[type="range"] {
+            width: 100%;
+        }
+
+        #start-btn {
+            padding: 10px 20px;
+            background-color: #007BFF;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+
+        #start-btn:hover {
+            background-color: #0056b3;
+        }
+
+        #stats {
+            margin-top: 20px;
+        }
+
+        #stats div {
+            margin-bottom: 10px;
+        }
+
+        #status {
+            margin-top: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div class="form-group">
+            <label for="frequency">每秒发送的数据包数量:</label>
+            <input type="range" id="frequency" min="1" max="128" value="10" oninput="updateValue('frequency')">
+            <span id="frequency-value">10</span>
+        </div>
+        <div class="form-group">
+            <label for="size">数据包大小 (字节):</label>
+            <input type="range" id="size" min="1" max="4096" value="100" oninput="updateValue('size')">
+            <span id="size-value">100</span>
+        </div>
+        <div class="form-group">
+            <label for="duration">持续时间 (秒):</label>
+            <input type="range" id="duration" min="1" max="120" value="10" oninput="updateValue('duration')">
+            <span id="duration-value">10</span>
+        </div>
+        <button id="start-btn">开始测试</button>
+        <div id="status">状态: 等待中...</div>
+        <div id="stats">
+            <div>发送的数据包数量: <span id="sent-packets">0</span></div>
+            <div>接收的数据包数量: <span id="received-packets">0</span></div>
+            <div>丢包率: <span id="packet-loss-rate">0%</span></div>
+        </div>
+        <canvas id="chart" width="400" height="300"></canvas>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        let sentPackets = 0;
+        let receivedPackets = 0;
+        let dataChannel;
+        let pc;
+        let intervalId;
+        let chart;
+        const sentPacketTimes = {};
+        let packetCount = 0;
+
+        const frequency_input = document.getElementById('frequency');
+        const size_input = document.getElementById('size');
+        const duration_input = document.getElementById('duration');
+
+        const updateValue = (id) => {
+            document.getElementById(`${id}-value`).innerText = document.getElementById(id).value;
+        };
+
+        frequency_input.addEventListener("change", (event) => {
+
+            if (parseInt(frequency_input.value) > 64) {
+                duration_input.max = 10;
+                size_input.max = 1536;
+                if (parseInt(duration_input.value) == 10) {
+                    document.getElementById(`duration-value`).innerText = 10;
+                }
+                if (parseInt(size_input.value) == 1536) {
+                    document.getElementById(`size-value`).innerText = 1536;
+                }
+            }
+            else {
+                duration_input.max = 120;
+                size_input.max = 4096;
+            }
+        })
+
+
+        const setStatus = (status) => {
+            document.getElementById('status').innerText = `状态: ${status}`;
+        };
+
+        const startSendingData = (frequency, size, totalPackets, duration) => {
+            packetCount = 0;
+            intervalId = setInterval(() => {
+                if (packetCount >= totalPackets || dataChannel.readyState !== 'open') {
+                    clearInterval(intervalId);
+                    setStatus('测试完成');
+                    document.getElementById('start-btn').disabled = false;
+                    updateChart(); // 最后一次更新图表
+                    return;
+                }
+                const packet = `${packetCount},${Date.now()}`;
+                dataChannel.send(packet);
+                sentPacketTimes[packetCount] = { sentTime: Date.now(), received: false };
+                packetCount++;
+                document.getElementById('sent-packets').innerText = packetCount;
+            }, 1000 / frequency);
+
+            setTimeout(() => {
+                clearInterval(intervalId);
+                setStatus('测试完成');
+                document.getElementById('start-btn').disabled = false;
+                // 在测试结束后，检查并更新图表中未收到的数据包
+                for (let i = 0; i < packetCount; i++) {
+                    if (!sentPacketTimes[i].received) {
+                        sentPacketTimes[i].latency = -1; // 使用-1表示丢失的数据包
+                    }
+                }
+                updateChart(); // 最后一次更新图表
+            }, duration * 1000);
+        };
+
+        const handleWebSocketMessage = async (event) => {
+            const message = JSON.parse(event.data);
+            if (message.candidate) {
+                try {
+                    await pc.addIceCandidate(new RTCIceCandidate(message));
+                } catch (e) {
+                    console.error("添加接收到的ICE候选者时出错", e);
+                }
+            } else if (message.sdp) {
+                await pc.setRemoteDescription(new RTCSessionDescription(message));
+                if (message.type === 'offer') {
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    ws.send(JSON.stringify(pc.localDescription));
+                }
+            }
+        };
+
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            document.getElementById('start-btn').disabled = true;
+            setStatus('建立连接中...');
+
+            const frequency = parseInt(document.getElementById('frequency').value);
+            const size = parseInt(document.getElementById('size').value);
+            const duration = parseInt(document.getElementById('duration').value);
+            const totalPackets = frequency * duration;
+
+            sentPackets = 0;
+            receivedPackets = 0;
+            document.getElementById('sent-packets').innerText = sentPackets;
+            document.getElementById('received-packets').innerText = receivedPackets;
+            document.getElementById('packet-loss-rate').innerText = '0%';
+
+            const ws = new WebSocket('ws://localhost:8080/ws');
+            ws.onopen = async () => {
+                console.log("WebSocket连接已打开");
+                setStatus('连接已建立，准备测试...');
+
+                pc = new RTCPeerConnection();
+                dataChannel = pc.createDataChannel('dataChannel', { ordered: false, maxRetransmits: 0 });
+
+                dataChannel.onopen = () => {
+                    console.log("数据通道已打开");
+                    setStatus('测试中...');
+                    startSendingData(frequency, size, totalPackets, duration);
+                };
+
+                dataChannel.onmessage = (event) => {
+                    const [packetIndex, sentTime] = event.data.split(',');
+                    const currentTime = Date.now();
+                    const latency = currentTime - parseInt(sentTime, 10);
+                    receivedPackets++;
+                    sentPacketTimes[packetIndex].received = true;
+                    sentPacketTimes[packetIndex].latency = latency;
+                    document.getElementById('received-packets').innerText = receivedPackets;
+                    const lossRate = ((packetCount - receivedPackets) / packetCount) * 100;
+                    document.getElementById('packet-loss-rate').innerText = lossRate.toFixed(2) + '%';
+                    //updateChart(); // 每次接收到数据包时更新图表
+                };
+
+                pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        ws.send(JSON.stringify(event.candidate.toJSON()));
+                    }
+                };
+
+                ws.onmessage = handleWebSocketMessage;
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                ws.send(JSON.stringify(pc.localDescription));
+
+                // 初始化图表
+                const ctx = document.getElementById('chart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: [],
+                        datasets: [
+                            {
+                                label: '延迟 (ms)',
+                                borderColor: 'rgb(75, 192, 192)',
+                                backgroundColor: (context) => {
+                                    const index = context.dataIndex;
+                                    const value = context.dataset.data[index];
+                                    return value === -1 ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)';
+                                },
+                                fill: false,
+                                data: [],
+                            }
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: '延迟 (ms)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: (context) => {
+                                        const value = context.raw;
+                                        return value === -1 ? '丢失数据包' : `延迟: ${value} ms`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // 定时批量更新图表
+                //setInterval(updateChart, updateInterval);
+            };
+
+            ws.onerror = () => {
+                setStatus('连接失败');
+                document.getElementById('start-btn').disabled = false;
+            };
+
+            ws.onclose = () => {
+                if (intervalId) {
+                    clearInterval(intervalId);
+                }
+                setStatus('连接关闭');
+                document.getElementById('start-btn').disabled = false;
+            };
+        });
+
+        // 示例中的 updateChart 函数可以改进为支持动态更新和滚动显示的形式
+        const updateChart = () => {
+            const labels = [];
+            const data = [];
+
+            // 示例：每隔一定数量的数据包进行平均延迟计算和显示
+            const sampleSize = Math.ceil(packetCount / 100); // 每50个数据包取一个样本
+
+            for (let i = 0; i < packetCount; i += sampleSize) {
+                const endIndex = Math.min(i + sampleSize, packetCount);
+                let sumLatency = 0;
+                let validCount = 0;
+
+                for (let j = i; j < endIndex; j++) {
+                    if (sentPacketTimes[j].latency !== undefined && sentPacketTimes[j].latency !== -1) {
+                        sumLatency += sentPacketTimes[j].latency;
+                        validCount++;
+                    }
+                }
+
+                if (validCount > 0) {
+                    const averageLatency = sumLatency / validCount;
+                    labels.push(i);
+                    data.push(averageLatency);
+                }
+            }
+
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = data;
+            chart.update();
+        };
+    </script>
+</body>
+
+</html>
