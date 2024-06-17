@@ -5,10 +5,17 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/pion/webrtc/v3"
 	"golang.org/x/net/websocket"
 )
+
+// Config 用于存储从配置文件加载的设置
+type Config struct {
+	ListenPort int `json:"listen_port"`
+}
+
 
 var peerConnection *webrtc.PeerConnection
 
@@ -93,11 +100,38 @@ func websocketHandler(ws *websocket.Conn) {
 	}
 }
 
+	
+
 func main() {
+	// 检查配置文件是否存在
+	if _, err := os.Stat("config.json"); os.IsNotExist(err) {
+		// 如果不存在，则创建默认配置文件
+		defaultConfig := Config{ListenPort: 8080}
+		configData, err := json.MarshalIndent(defaultConfig, "", "  ")
+		if err != nil {
+			log.Fatalf("Failed to marshal default config: %v", err)
+		}
+		if err := os.WriteFile("config.json", configData, 0644); err != nil {
+			log.Fatalf("Failed to write default config file: %v", err)
+		}
+		log.Println("Default config file created.")
+	}
+
+	// 加载并使用配置
+	configData, err := os.ReadFile("config.json")
+	if err != nil {
+		log.Fatalf("Failed to read config file: %v", err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(configData, &cfg); err != nil {
+		log.Fatalf("Failed to parse config data: %v", err)
+	}
+
+	// 使用配置文件中的端口
 	http.Handle("/ws", websocket.Handler(websocketHandler))
 	fs := http.FileServer(http.Dir("./static"))
 	http.Handle("/", fs)
 
-	fmt.Println("Server started at :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	fmt.Printf("Server started at :%d\n", cfg.ListenPort)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", cfg.ListenPort), nil))
 }

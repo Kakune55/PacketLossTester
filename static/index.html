@@ -93,7 +93,7 @@
         <canvas id="chart" width="400" height="300"></canvas>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/js/chart.js"></script>
     <script>
         let sentPackets = 0;
         let receivedPackets = 0;
@@ -199,10 +199,10 @@
             document.getElementById('received-packets').innerText = receivedPackets;
             document.getElementById('packet-loss-rate').innerText = '0%';
 
-            const ws = new WebSocket('ws://localhost:8080/ws');
+            const ws = new WebSocket('/ws');
             ws.onopen = async () => {
                 console.log("WebSocket连接已打开");
-                setStatus('连接已建立，准备测试...');
+                setStatus('连接已建立，准备建立数据通道测试...');
 
                 pc = new RTCPeerConnection();
                 dataChannel = pc.createDataChannel('dataChannel', { ordered: false, maxRetransmits: 0 });
@@ -305,7 +305,7 @@
             const data = [];
 
             // 示例：每隔一定数量的数据包进行平均延迟计算和显示
-            const sampleSize = Math.ceil(packetCount / 100); // 每50个数据包取一个样本
+            const sampleSize = Math.ceil(packetCount / 150); // 每150个数据包取一个样本
 
             for (let i = 0; i < packetCount; i += sampleSize) {
                 const endIndex = Math.min(i + sampleSize, packetCount);
