@@ -115,10 +115,10 @@
         frequency_input.addEventListener("change", (event) => {
 
             if (parseInt(frequency_input.value) > 64) {
-                duration_input.max = 10;
+                duration_input.max = 20;
                 size_input.max = 1536;
-                if (parseInt(duration_input.value) == 10) {
-                    document.getElementById(`duration-value`).innerText = 10;
+                if (parseInt(duration_input.value) == 20) {
+                    document.getElementById(`duration-value`).innerText = 20;
                 }
                 if (parseInt(size_input.value) == 1536) {
                     document.getElementById(`size-value`).innerText = 1536;
