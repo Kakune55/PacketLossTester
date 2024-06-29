@@ -13,6 +13,7 @@
             align-items: center;
             height: 100vh;
             background-color: #f0f0f0;
+            margin: 0;
         }
 
         #app {
@@ -22,7 +23,7 @@
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             text-align: center;
             width: 80%;
-            max-width: 600px;
+            max-width: 900px;
         }
 
         .form-group {
@@ -32,6 +33,7 @@
         label {
             display: block;
             margin-bottom: 5px;
+            font-weight: bold;
         }
 
         input[type="range"] {
@@ -45,6 +47,7 @@
             border: none;
             cursor: pointer;
             border-radius: 5px;
+            transition: background-color 0.3s;
         }
 
         #start-btn:hover {
@@ -53,6 +56,7 @@
 
         #stats {
             margin-top: 20px;
+            text-align: left;
         }
 
         #stats div {
@@ -62,12 +66,18 @@
         #status {
             margin-top: 20px;
             font-weight: bold;
+            color: #333;
+        }
+
+        #chart-container {
+            margin: 20px;
         }
     </style>
 </head>
 
 <body>
     <div id="app">
+        <h2>网络丢包率测试</h2>
         <div class="form-group">
             <label for="frequency">每秒发送的数据包数量:</label>
             <input type="range" id="frequency" min="1" max="128" value="10" oninput="updateValue('frequency')">
@@ -83,14 +93,26 @@
             <input type="range" id="duration" min="1" max="120" value="10" oninput="updateValue('duration')">
             <span id="duration-value">10</span>
         </div>
-        <button id="start-btn">开始测试</button>
-        <div id="status">状态: 等待中...</div>
-        <div id="stats">
-            <div>发送的数据包数量: <span id="sent-packets">0</span></div>
-            <div>接收的数据包数量: <span id="received-packets">0</span></div>
-            <div>丢包率: <span id="packet-loss-rate">0%</span></div>
+        <div class="form-group">
+            <label>节点:</label>
+            <select id="testNode">
+                <!-- Populate with nodes -->
+            </select>
         </div>
-        <canvas id="chart" width="400" height="300"></canvas>
+        <div style="display: flex;justify-content: space-around;">
+            <div id="stats">
+                <div>发送的数据包数量: <span id="sent-packets">0</span></div>
+                <div>接收的数据包数量: <span id="received-packets">0</span></div>
+                <div>丢包率: <span id="packet-loss-rate">0%</span></div>
+            </div>
+            <div style="margin-top: 20px;">
+                <button id="start-btn">开始测试</button>
+                <div id="status">状态: 就绪</div>
+            </div>
+        </div>
+        <div id="chart-container">
+            <canvas id="chart" width="600" height="300"></canvas>
+        </div>
     </div>
 
     <script src="/js/chart.js"></script>
@@ -108,12 +130,44 @@
         const size_input = document.getElementById('size');
         const duration_input = document.getElementById('duration');
 
+        // 获取测试节点列表
+        const apiUrl = 'nodes.json';
+
+        // 使用fetch获取数据
+        fetch(apiUrl)
+            .then(response => {
+                // 确保响应的状态是OK的
+                if (!response.ok) {
+                    throw new Error(`获取节点失败: ${response.status}`);
+                }
+                // 解析JSON格式的响应数据
+                return response.json();
+            })
+            .then(data => {
+                // 获取<select>元素
+                const selectElement = document.getElementById('testNode');
+                // 清空现有的<option>元素
+                selectElement.innerHTML = '';
+
+                // 遍历数据，创建新的<option>元素并添加到<select>中
+                data.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.url;
+                    option.textContent = item.name;
+                    selectElement.appendChild(option);
+                });
+            })
+            .catch(error => {
+                // 处理错误
+                console.error('错误:', error);
+            });
+
+
         const updateValue = (id) => {
             document.getElementById(`${id}-value`).innerText = document.getElementById(id).value;
         };
 
         frequency_input.addEventListener("change", (event) => {
-
             if (parseInt(frequency_input.value) > 64) {
                 duration_input.max = 20;
                 size_input.max = 1536;
@@ -123,13 +177,11 @@
                 if (parseInt(size_input.value) == 1536) {
                     document.getElementById(`size-value`).innerText = 1536;
                 }
-            }
-            else {
+            } else {
                 duration_input.max = 120;
                 size_input.max = 4096;
             }
         })
-
 
         const setStatus = (status) => {
             document.getElementById('status').innerText = `状态: ${status}`;
@@ -199,12 +251,19 @@
             document.getElementById('received-packets').innerText = receivedPackets;
             document.getElementById('packet-loss-rate').innerText = '0%';
 
-            const ws = new WebSocket('/ws');
+
+            const ws = new WebSocket(document.getElementById('testNode').value);
             ws.onopen = async () => {
                 console.log("WebSocket连接已打开");
                 setStatus('连接已建立，准备建立数据通道测试...');
 
-                pc = new RTCPeerConnection();
+                const configuration = {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                    ]
+                };
+                pc = new RTCPeerConnection(configuration);
                 dataChannel = pc.createDataChannel('dataChannel', { ordered: false, maxRetransmits: 0 });
 
                 dataChannel.onopen = () => {
@@ -260,14 +319,6 @@
                     },
                     options: {
                         responsive: true,
-                        scales: {
-                            y: {
-                                title: {
-                                    display: true,
-                                    text: '延迟 (ms)'
-                                }
-                            }
-                        },
                         plugins: {
                             tooltip: {
                                 callbacks: {
@@ -299,35 +350,65 @@
             };
         });
 
-        // 示例中的 updateChart 函数可以改进为支持动态更新和滚动显示的形式
         const updateChart = () => {
             const labels = [];
-            const data = [];
+            const dataAvg = [];
+            const dataMax = [];
+            const dataMin = [];
 
-            // 示例：每隔一定数量的数据包进行平均延迟计算和显示
-            const sampleSize = Math.ceil(packetCount / 150); // 每150个数据包取一个样本
+            const sampleSize = Math.ceil(packetCount / 120); // 固定分成120组
 
-            for (let i = 0; i < packetCount; i += sampleSize) {
+            for (let i = 0; i < packetCount - 2; i += sampleSize) {
                 const endIndex = Math.min(i + sampleSize, packetCount);
                 let sumLatency = 0;
                 let validCount = 0;
+                let maxLatency = -Infinity;
+                let minLatency = Infinity;
 
                 for (let j = i; j < endIndex; j++) {
-                    if (sentPacketTimes[j].latency !== undefined && sentPacketTimes[j].latency !== -1) {
-                        sumLatency += sentPacketTimes[j].latency;
+                    const latency = sentPacketTimes[j].latency;
+                    if (latency !== undefined && latency !== -1) {
+                        sumLatency += latency;
                         validCount++;
+                        if (latency > maxLatency) maxLatency = latency;
+                        if (latency < minLatency) minLatency = latency;
                     }
                 }
 
                 if (validCount > 0) {
                     const averageLatency = sumLatency / validCount;
                     labels.push(i);
-                    data.push(averageLatency);
+                    dataAvg.push(averageLatency);
+                    dataMax.push(maxLatency);
+                    dataMin.push(minLatency);
                 }
             }
 
             chart.data.labels = labels;
-            chart.data.datasets[0].data = data;
+            chart.data.datasets = [
+                {
+                    label: '平均延迟 (ms)',
+                    borderColor: 'rgb(75, 192, 192)',
+                    backgroundColor: 'rgba(75, 192, 192',
+                    fill: false,
+                    data: dataAvg,
+                },
+                {
+                    type: 'line',
+                    label: '最大延迟 (ms)',
+                    borderColor: 'rgb(255, 0, 0, 0.4)',
+                    backgroundColor: 'rgba(255, 0, 0, 0.4)',
+                    fill: false,
+                    data: dataMax,
+                },
+                // {
+                //     label: '最小延迟 (ms)',
+                //     borderColor: 'rgb(54, 162, 235)',
+                //     backgroundColor: 'rgba(54, 162, 235)',
+                //     fill: false,
+                //     data: dataMin,
+                // },
+            ];
             chart.update();
         };
     </script>
