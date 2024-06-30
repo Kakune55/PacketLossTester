@@ -20,7 +20,7 @@
    - 使用Go语言编译和运行后端代码，确保WebSocket服务器和相关服务可用。
    
 2. **启动前端：**
-   - 在支持WebRTC的现代浏览器（如Chrome、Firefox等）中打开`index.html`文件。
+   - 在支持WebRTC的现代浏览器（如Chrome、Firefox等）中打开WebUI。
    - 调整滑动条来设置每秒发送的数据包数量、数据包大小和测试持续时间。
    
 3. **开始测试：**
