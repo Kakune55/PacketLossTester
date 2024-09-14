@@ -14,6 +14,7 @@ func LoadConfig(path string) Config {
 	// 检查配置文件是否存在
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// 如果不存在，则创建默认配置文件
+		os.MkdirAll("etc", 0755)
 		defaultConfig := Config{ListenPort: 8080}
 		configData, err := json.MarshalIndent(defaultConfig, "", "  ")
 		if err != nil {

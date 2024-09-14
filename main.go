@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	cfg := config.LoadConfig("config.json")
+	cfg := config.LoadConfig("etc/config.json")
 
 	http.Handle("/ws", websocket.Handler(ws.WebSocketHandler))
 	fs := http.FileServer(http.Dir("./static"))

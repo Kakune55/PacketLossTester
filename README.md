@@ -20,13 +20,20 @@
    - 使用Go语言编译和运行后端代码，确保WebSocket服务器和相关服务可用。
    
 2. **启动前端：**
-   - 在支持WebRTC的现代浏览器（如Chrome、Firefox等）中打开WebUI。
+   - 在支持WebRTC的现代浏览器（如Chrome、Firefox等）中打开URL，即可进入测试页面。
    - 调整滑动条来设置每秒发送的数据包数量、数据包大小和测试持续时间。
    
 3. **开始测试：**
    - 点击“开始测试”按钮后，系统会建立WebSocket连接和WebRTC数据通道，开始发送和接收数据包。
    - 实时显示发送的数据包数量、接收的数据包数量和计算的丢包率。
    - 测试结束后，系统会显示详细的延迟情况图表，并汇报测试结果。
+
+### Docker 部署
+```bash
+docker run -d --network host -v /etc/packLossTester:/app/etc --name pltester kakune55/packlosstester
+```
+配置文件自动挂载，默认配置文件为`/etc/packLossTester/config.json`
+修改后重启docker容器生效
 
 ## 注意事项
 
