@@ -1,4 +1,4 @@
-module webrtc
+module pltester
 
 go 1.21.3
 
