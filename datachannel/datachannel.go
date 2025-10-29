@@ -2,16 +2,15 @@ package datachannel
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"github.com/pion/webrtc/v3"
 	"golang.org/x/net/websocket"
 )
 
-var peerConnection *webrtc.PeerConnection
-
 // InitializePeerConnection 初始化并返回一个新的 WebRTC PeerConnection
-func InitializePeerConnection() *webrtc.PeerConnection {
+func InitializePeerConnection() (*webrtc.PeerConnection, error) {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -20,12 +19,11 @@ func InitializePeerConnection() *webrtc.PeerConnection {
 		},
 	}
 
-	var err error
-	peerConnection, err = webrtc.NewPeerConnection(config)
+	peerConnection, err := webrtc.NewPeerConnection(config)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("failed to create peer connection: %w", err)
 	}
-	return peerConnection
+	return peerConnection, nil
 }
 
 // HandleICECandidate 处理 ICE 候选
@@ -47,37 +45,38 @@ func HandleICECandidate(peerConnection *webrtc.PeerConnection, ws *websocket.Con
 }
 
 // HandleSDP 处理 SDP 消息
-func HandleSDP(peerConnection *webrtc.PeerConnection, msg string, ws *websocket.Conn) {
+func HandleSDP(peerConnection *webrtc.PeerConnection, msg string, ws *websocket.Conn) error {
 	var sdp webrtc.SessionDescription
 	if err := json.Unmarshal([]byte(msg), &sdp); err != nil {
-		log.Println("Failed to unmarshal SDP:", err)
-		return
+		return fmt.Errorf("failed to unmarshal SDP: %w", err)
 	}
 
-	if sdp.Type == webrtc.SDPTypeOffer {
+	switch sdp.Type {
+case webrtc.SDPTypeOffer:
 		if err := peerConnection.SetRemoteDescription(sdp); err != nil {
-			log.Println("Failed to set remote description:", err)
-			return
+			return fmt.Errorf("failed to set remote description: %w", err)
 		}
 
 		answer, err := peerConnection.CreateAnswer(nil)
 		if err != nil {
-			log.Println("Failed to create answer:", err)
-			return
+			return fmt.Errorf("failed to create answer: %w", err)
 		}
 
 		if err := peerConnection.SetLocalDescription(answer); err != nil {
-			log.Println("Failed to set local description:", err)
-			return
+			return fmt.Errorf("failed to set local description: %w", err)
 		}
 
-		answerJSON, _ := json.Marshal(answer)
-		if err := websocket.Message.Send(ws, string(answerJSON)); err != nil {
-			log.Println("Failed to send answer:", err)
+		answerJSON, err := json.Marshal(answer)
+		if err != nil {
+			return fmt.Errorf("failed to marshal answer: %w", err)
 		}
-	} else if sdp.Type == webrtc.SDPTypeAnswer {
+		if err := websocket.Message.Send(ws, string(answerJSON)); err != nil {
+			return fmt.Errorf("failed to send answer: %w", err)
+		}
+	case webrtc.SDPTypeAnswer:
 		if err := peerConnection.SetRemoteDescription(sdp); err != nil {
-			log.Println("Failed to set remote description:", err)
+			return fmt.Errorf("failed to set remote description: %w", err)
 		}
 	}
+	return nil
 }

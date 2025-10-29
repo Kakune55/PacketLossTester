@@ -3,9 +3,13 @@ let receivedPackets = 0;
 let dataChannel;
 let pc;
 let intervalId;
+let chartUpdateIntervalId; // 图表更新定时器ID
+let durationTimeoutId; // 持续时间定时器ID
 let chart;
 const sentPacketTimes = {};
 let packetCount = 0;
+let isStressMode = false; // 压测模式标志
+let stressStartTime = 0; // 压测模式开始时间
 
 const frequency_input = document.getElementById('frequency');
 const size_input = document.getElementById('size');
@@ -48,6 +52,22 @@ const updateValue = (id) => {
     document.getElementById(`${id}-value`).innerText = document.getElementById(id).value;
 };
 
+// 切换压测模式
+const toggleStressMode = () => {
+    isStressMode = document.getElementById('stress-mode').checked;
+    const durationGroup = document.getElementById('duration').parentElement;
+    
+    if (isStressMode) {
+        // 禁用持续时间设置
+        durationGroup.style.opacity = '0.5';
+        document.getElementById('duration').disabled = true;
+    } else {
+        // 启用持续时间设置
+        durationGroup.style.opacity = '1';
+        document.getElementById('duration').disabled = false;
+    }
+};
+
 const maxsize = 10240;
 
 frequency_input.addEventListener("change", (event) => {
@@ -72,33 +92,88 @@ const setStatus = (status) => {
 
 const startSendingData = (frequency, size, totalPackets, duration) => {
     packetCount = 0;
+    if (isStressMode) {
+        stressStartTime = Date.now();
+    }
+    
+    // 启动图表更新定时器，每1秒更新一次
+    if (chartUpdateIntervalId) {
+        clearInterval(chartUpdateIntervalId);
+    }
+    chartUpdateIntervalId = setInterval(() => {
+        updateChart();
+    }, 500);
+    
     intervalId = setInterval(() => {
-        if (packetCount >= totalPackets || dataChannel.readyState !== 'open') {
-            clearInterval(intervalId);
-            setStatus('测试完成');
-            document.getElementById('start-btn').disabled = false;
-            updateChart(); // 最后一次更新图表
+        // 压测模式下不检查 totalPackets
+        if (!isStressMode && (packetCount >= totalPackets || dataChannel.readyState !== 'open')) {
+            stopTest();
             return;
         }
+        
+        if (dataChannel.readyState !== 'open') {
+            stopTest();
+            return;
+        }
+        
         const packet = `${packetCount},${Date.now()}`;
         dataChannel.send(packet);
         sentPacketTimes[packetCount] = { sentTime: Date.now(), received: false };
         packetCount++;
-        document.getElementById('sent-packets').innerText = packetCount;
+        
+        // 压测模式下，清理10秒前的数据
+        if (isStressMode) {
+            const currentTime = Date.now();
+            const cutoffTime = currentTime - 10000; // 10秒前
+            for (let key in sentPacketTimes) {
+                if (sentPacketTimes[key].sentTime < cutoffTime) {
+                    // 删除过期的数据包记录
+                    delete sentPacketTimes[key];
+                }
+            }
+            // 更新显示的发送包数量为当前窗口内的包数量
+            document.getElementById('sent-packets').innerText = Object.keys(sentPacketTimes).length;
+        } else {
+            document.getElementById('sent-packets').innerText = packetCount;
+        }
     }, 1000 / frequency);
 
-    setTimeout(() => {
+    // 非压测模式下设置持续时间定时器
+    if (!isStressMode) {
+        durationTimeoutId = setTimeout(() => {
+            stopTest();
+        }, duration * 1000);
+    }
+};
+
+// 停止测试函数
+const stopTest = () => {
+    if (intervalId) {
         clearInterval(intervalId);
-        setStatus('测试完成');
-        document.getElementById('start-btn').disabled = false;
-        // 在测试结束后，检查并更新图表中未收到的数据包
+        intervalId = null;
+    }
+    if (chartUpdateIntervalId) {
+        clearInterval(chartUpdateIntervalId);
+        chartUpdateIntervalId = null;
+    }
+    if (durationTimeoutId) {
+        clearTimeout(durationTimeoutId);
+        durationTimeoutId = null;
+    }
+    
+    setStatus('测试完成');
+    document.getElementById('start-btn').disabled = false;
+    document.getElementById('stop-btn').style.display = 'none';
+    
+    // 在测试结束后，检查并更新图表中未收到的数据包
+    if (!isStressMode) {
         for (let i = 0; i < packetCount; i++) {
-            if (!sentPacketTimes[i].received) {
+            if (sentPacketTimes[i] && !sentPacketTimes[i].received) {
                 sentPacketTimes[i].latency = -1; // 使用-1表示丢失的数据包
             }
         }
-        updateChart(); // 最后一次更新图表
-    }, duration * 1000);
+    }
+    updateChart(); // 最后一次更新图表
 };
 
 const handleWebSocketMessage = async (event) => {
@@ -121,12 +196,13 @@ const handleWebSocketMessage = async (event) => {
 
 document.getElementById('start-btn').addEventListener('click', async () => {
     document.getElementById('start-btn').disabled = true;
+    document.getElementById('stop-btn').style.display = 'inline-block'; // 显示停止按钮
     setStatus('建立连接中...');
 
     const frequency = parseInt(document.getElementById('frequency').value);
     const size = parseInt(document.getElementById('size').value);
     const duration = parseInt(document.getElementById('duration').value);
-    const totalPackets = frequency * duration;
+    const totalPackets = isStressMode ? Infinity : frequency * duration; // 压测模式下无限制
 
     sentPackets = 0;
     receivedPackets = 0;
@@ -160,10 +236,28 @@ document.getElementById('start-btn').addEventListener('click', async () => {
         function updateUI() {
             if (!updateUIPending) {
                 requestAnimationFrame(() => {
-                    // 更新接收到的数据包数量
-                    document.getElementById('received-packets').innerText = receivedPackets;
-                    // 计算并更新丢包率
-                    const lossRate = ((packetCount - receivedPackets) / packetCount) * 100;
+                    let totalSent, receivedCount, lossRate;
+                    
+                    // 压测模式下，只计算当前窗口内的包
+                    if (isStressMode) {
+                        totalSent = Object.keys(sentPacketTimes).length;
+                        // 重新计算接收到的包数量
+                        receivedCount = 0;
+                        for (let key in sentPacketTimes) {
+                            if (sentPacketTimes[key].received) {
+                                receivedCount++;
+                            }
+                        }
+                        lossRate = totalSent > 0 ? ((totalSent - receivedCount) / totalSent) * 100 : 0;
+                    } else {
+                        // 正常模式
+                        totalSent = packetCount;
+                        receivedCount = receivedPackets;
+                        lossRate = totalSent > 0 ? ((totalSent - receivedCount) / totalSent) * 100 : 0;
+                    }
+                    
+                    // 更新显示
+                    document.getElementById('received-packets').innerText = receivedCount;
                     document.getElementById('packet-loss-rate').innerText = lossRate.toFixed(2) + '%';
                     updateUIPending = false;
                 });
@@ -175,12 +269,19 @@ document.getElementById('start-btn').addEventListener('click', async () => {
             const [packetIndex, sentTime] = event.data.split(',');
             const currentTime = Date.now();
             const latency = currentTime - parseInt(sentTime, 10);
-            receivedPackets++;
-            sentPacketTimes[packetIndex].received = true;
-            sentPacketTimes[packetIndex].latency = latency;
+            
+            // 只有在记录中存在该包时才处理
+            if (sentPacketTimes[packetIndex]) {
+                // 非压测模式下才累加 receivedPackets
+                if (!isStressMode && !sentPacketTimes[packetIndex].received) {
+                    receivedPackets++;
+                }
+                sentPacketTimes[packetIndex].received = true;
+                sentPacketTimes[packetIndex].latency = latency;
 
-            // 异步更新UI，避免阻塞数据处理流程
-            updateUI();
+                // 异步更新UI，避免阻塞数据处理流程
+                updateUI();
+            }
         };
 
         pc.onicecandidate = (event) => {
@@ -203,20 +304,36 @@ document.getElementById('start-btn').addEventListener('click', async () => {
                 labels: [],
                 datasets: [
                     {
-                        label: '延迟 (ms)',
-                        borderColor: 'rgb(75, 192, 192)',
-                        backgroundColor: (context) => {
-                            const index = context.dataIndex;
-                            const value = context.dataset.data[index];
-                            return value === -1 ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)';
-                        },
-                        fill: false,
+                        type: 'bar',
+                        label: '最大延迟 (ms)',
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.6)',
                         data: [],
+                        order: 2, // 较大的order值会显示在底层
+                    },
+                    {
+                        type: 'bar',
+                        label: '平均延迟 (ms)',
+                        borderColor: 'rgb(54, 162, 235)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                        data: [],
+                        order: 1, // 较小的order值会显示在顶层
                     }
                 ],
             },
             options: {
                 responsive: true,
+                animation: {
+                    duration: 750, // 动画持续时间（毫秒）
+                    easing: 'easeInOutQuart', // 缓动函数
+                },
+                transitions: {
+                    active: {
+                        animation: {
+                            duration: 400 // 活动状态下的动画时间
+                        }
+                    }
+                },
                 plugins: {
                     tooltip: {
                         callbacks: {
@@ -237,12 +354,17 @@ document.getElementById('start-btn').addEventListener('click', async () => {
     };
 
     ws.onclose = () => {
-        if (intervalId) {
-            clearInterval(intervalId);
-        }
+        stopTest();
         setStatus('连接关闭');
-        document.getElementById('start-btn').disabled = false;
     };
+});
+
+// 停止按钮事件监听器
+document.getElementById('stop-btn').addEventListener('click', () => {
+    stopTest();
+    if (pc) {
+        pc.close();
+    }
 });
 
 const updateChart = () => {
@@ -251,58 +373,102 @@ const updateChart = () => {
     const dataMax = [];
     const dataMin = [];
 
-    const sampleSize = Math.ceil(packetCount / 120); // 固定分成120组
+    let dataToProcess;
+    
+    if (isStressMode) {
+        // 压测模式：只处理最近10秒的数据（滚动窗口）
+        const currentTime = Date.now();
+        const cutoffTime = currentTime - 10000; // 10秒前
+        
+        // 获取所有有效的包索引并排序
+        const validKeys = Object.keys(sentPacketTimes)
+            .map(k => parseInt(k))
+            .filter(k => sentPacketTimes[k].sentTime >= cutoffTime)
+            .sort((a, b) => a - b);
+        
+        if (validKeys.length === 0) return;
+        
+        const minKey = validKeys[0];
+        const maxKey = validKeys[validKeys.length - 1];
+        const range = maxKey - minKey + 1;
+        const sampleSize = Math.max(1, Math.ceil(range / 120)); // 固定分成120组
+        
+        for (let i = minKey; i <= maxKey; i += sampleSize) {
+            const endIndex = Math.min(i + sampleSize, maxKey + 1);
+            let sumLatency = 0;
+            let validCount = 0;
+            let maxLatency = -Infinity;
+            let minLatency = Infinity;
 
-    for (let i = 0; i < packetCount - 2; i += sampleSize) {
-        const endIndex = Math.min(i + sampleSize, packetCount);
-        let sumLatency = 0;
-        let validCount = 0;
-        let maxLatency = -Infinity;
-        let minLatency = Infinity;
+            for (let j = i; j < endIndex; j++) {
+                if (sentPacketTimes[j]) {
+                    const latency = sentPacketTimes[j].latency;
+                    if (latency !== undefined && latency !== -1) {
+                        sumLatency += latency;
+                        validCount++;
+                        if (latency > maxLatency) maxLatency = latency;
+                        if (latency < minLatency) minLatency = latency;
+                    }
+                }
+            }
 
-        for (let j = i; j < endIndex; j++) {
-            const latency = sentPacketTimes[j].latency;
-            if (latency !== undefined && latency !== -1) {
-                sumLatency += latency;
-                validCount++;
-                if (latency > maxLatency) maxLatency = latency;
-                if (latency < minLatency) minLatency = latency;
+            if (validCount > 0) {
+                const averageLatency = sumLatency / validCount;
+                // 使用相对时间（秒）作为标签
+                const relativeTime = ((i - minKey) * 1000 / (frequency_input.value || 32) / 1000).toFixed(1);
+                labels.push(relativeTime + 's');
+                dataAvg.push(averageLatency);
+                dataMax.push(maxLatency);
+                dataMin.push(minLatency);
             }
         }
+    } else {
+        // 正常模式：处理所有数据
+        const sampleSize = Math.ceil(packetCount / 120); // 固定分成120组
 
-        if (validCount > 0) {
-            const averageLatency = sumLatency / validCount;
-            labels.push(i);
-            dataAvg.push(averageLatency);
-            dataMax.push(maxLatency);
-            dataMin.push(minLatency);
+        for (let i = 0; i < packetCount - 2; i += sampleSize) {
+            const endIndex = Math.min(i + sampleSize, packetCount);
+            let sumLatency = 0;
+            let validCount = 0;
+            let maxLatency = -Infinity;
+            let minLatency = Infinity;
+
+            for (let j = i; j < endIndex; j++) {
+                if (sentPacketTimes[j]) {
+                    const latency = sentPacketTimes[j].latency;
+                    if (latency !== undefined && latency !== -1) {
+                        sumLatency += latency;
+                        validCount++;
+                        if (latency > maxLatency) maxLatency = latency;
+                        if (latency < minLatency) minLatency = latency;
+                    }
+                }
+            }
+
+            if (validCount > 0) {
+                const averageLatency = sumLatency / validCount;
+                labels.push(i);
+                dataAvg.push(averageLatency);
+                dataMax.push(maxLatency);
+                dataMin.push(minLatency);
+            }
         }
     }
 
+    // 动态更新数据，而不是重新创建 datasets
+    // 这样可以产生平滑的过渡动画
     chart.data.labels = labels;
-    chart.data.datasets = [
-        {
-            label: '平均延迟 (ms)',
-            borderColor: 'rgb(75, 192, 192)',
-            backgroundColor: 'rgba(75, 192, 192',
-            fill: false,
-            data: dataAvg,
-        },
-        {
-            type: 'line',
-            label: '最大延迟 (ms)',
-            borderColor: 'rgb(255, 0, 0, 0.4)',
-            backgroundColor: 'rgba(255, 0, 0, 0.4)',
-            fill: false,
-            data: dataMax,
-        },
-        // {
-        //     label: '最小延迟 (ms)',
-        //     borderColor: 'rgb(54, 162, 235)',
-        //     backgroundColor: 'rgba(54, 162, 235)',
-        //     fill: false,
-        //     data: dataMin,
-        // },
-    ];
-    chart.update();
+    
+    // 更新最大延迟数据 (datasets[0] - 红色柱状图，底层)
+    if (chart.data.datasets[0]) {
+        chart.data.datasets[0].data = dataMax;
+    }
+    
+    // 更新平均延迟数据 (datasets[1] - 蓝色柱状图，顶层)
+    if (chart.data.datasets[1]) {
+        chart.data.datasets[1].data = dataAvg;
+    }
+    
+    // 使用 'active' 模式进行平滑动画更新
+    chart.update('active');
 };

@@ -54,6 +54,22 @@
             background-color: #0056b3;
         }
 
+        #stop-btn {
+            padding: 10px 20px;
+            background-color: #dc3545;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+            display: none;
+        }
+
+        #stop-btn:hover {
+            background-color: #c82333;
+        }
+
         #stats {
             margin-top: 20px;
             text-align: left;
@@ -94,6 +110,12 @@
             <span id="duration-value">10</span>
         </div>
         <div class="form-group">
+            <label for="stress-mode">
+                <input type="checkbox" id="stress-mode" onchange="toggleStressMode()">
+                压测模式（无限期测试，保留10秒滚动数据）
+            </label>
+        </div>
+        <div class="form-group">
             <label>节点:</label>
             <select id="testNode">
                 <!-- Populate with nodes -->
@@ -107,6 +129,7 @@
             </div>
             <div style="margin-top: 20px;">
                 <button id="start-btn">开始测试</button>
+                <button id="stop-btn">停止测试</button>
                 <div id="status">状态: 就绪</div>
             </div>
         </div>
