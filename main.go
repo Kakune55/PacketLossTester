@@ -38,6 +38,22 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// 设置公网IP（如果配置了）
+	if cfg.PublicIP != "" {
+		ws.SetPublicIP(cfg.PublicIP)
+		log.Printf("Public IP configured: %s", cfg.PublicIP)
+	} else {
+		log.Println("No public IP configured, using automatic NAT traversal")
+	}
+	
+	// 设置UDP端口范围（如果配置了）
+	if cfg.UDPPortMin > 0 && cfg.UDPPortMax > 0 {
+		ws.SetUDPPortRange(cfg.UDPPortMin, cfg.UDPPortMax)
+		log.Printf("UDP port range configured: %d-%d", cfg.UDPPortMin, cfg.UDPPortMax)
+	} else {
+		log.Println("No UDP port range configured, using random ports")
+	}
+
 	// 添加CORS中间件
 	mux := http.NewServeMux()
 	mux.Handle("/ws", websocket.Handler(ws.WebSocketHandler))

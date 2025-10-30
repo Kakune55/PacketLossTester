@@ -4,25 +4,95 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 
+	"github.com/pion/ice/v2"
 	"github.com/pion/webrtc/v3"
 	"golang.org/x/net/websocket"
 )
 
 // InitializePeerConnection 初始化并返回一个新的 WebRTC PeerConnection
 func InitializePeerConnection() (*webrtc.PeerConnection, error) {
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{"stun:stun.l.google.com:19302", "stun:stun01.sipphone.com"},
+	return InitializePeerConnectionWithPublicIP("")
+}
+
+// InitializePeerConnectionWithPublicIP 使用指定的公网IP初始化 WebRTC PeerConnection
+func InitializePeerConnectionWithPublicIP(publicIP string) (*webrtc.PeerConnection, error) {
+	return InitializePeerConnectionWithConfig(publicIP, 0, 0)
+}
+
+// InitializePeerConnectionWithConfig 使用完整配置初始化 WebRTC PeerConnection
+func InitializePeerConnectionWithConfig(publicIP string, udpPortMin, udpPortMax uint16) (*webrtc.PeerConnection, error) {
+	// 创建 SettingEngine 以配置 NAT 类型
+	settingEngine := webrtc.SettingEngine{}
+	
+	// 如果提供了公网IP或设置了环境变量，则配置 NAT 1to1 映射
+	if publicIP == "" {
+		publicIP = os.Getenv("PUBLIC_IP")
+	}
+	
+	if publicIP != "" {
+		log.Printf("Using public IP for NAT 1:1 mapping: %s", publicIP)
+		settingEngine.SetNAT1To1IPs([]string{publicIP}, webrtc.ICECandidateTypeHost)
+	} else {
+		log.Println("No public IP configured, using default NAT traversal")
+	}
+	
+	// 配置UDP端口范围
+	if udpPortMin > 0 && udpPortMax > 0 && udpPortMax >= udpPortMin {
+		log.Printf("Setting UDP port range: %d-%d", udpPortMin, udpPortMax)
+		if err := settingEngine.SetEphemeralUDPPortRange(udpPortMin, udpPortMax); err != nil {
+			log.Printf("Warning: Failed to set UDP port range: %v", err)
+		}
+		// 禁用 mDNS 以避免 .local 候选
+		settingEngine.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	} else {
+		log.Println("Using random UDP ports (no range specified)")
+	}
+	
+	// 设置网络类型，允许所有类型的候选
+	settingEngine.SetNetworkTypes([]webrtc.NetworkType{
+		webrtc.NetworkTypeUDP4,
+		webrtc.NetworkTypeUDP6,
+		webrtc.NetworkTypeTCP4,
+		webrtc.NetworkTypeTCP6,
+	})
+
+	// 如果配置了公网IP和端口范围，则不需要STUN服务器
+	var config webrtc.Configuration
+	if publicIP != "" && udpPortMin > 0 && udpPortMax > 0 {
+		// 有公网IP和端口范围，不使用STUN
+		log.Println("Using direct connection without STUN (public IP configured)")
+		config = webrtc.Configuration{
+			ICEServers:           []webrtc.ICEServer{}, // 不使用STUN
+			ICECandidatePoolSize: 10,
+		}
+	} else {
+		// 没有公网IP配置，使用STUN服务器
+		log.Println("Using STUN servers for NAT traversal")
+		config = webrtc.Configuration{
+			ICEServers: []webrtc.ICEServer{
+				{
+					URLs: []string{
+						"stun:stun.l.google.com:19302",
+						"stun:stun1.l.google.com:19302",
+						"stun:stun2.l.google.com:19302",
+						"stun:stun.sipgate.net:3478",
+					},
+				},
 			},
-		},
+			ICECandidatePoolSize: 10,
+		}
 	}
 
-	peerConnection, err := webrtc.NewPeerConnection(config)
+	// 使用 API 创建 PeerConnection
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
+	peerConnection, err := api.NewPeerConnection(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create peer connection: %w", err)
 	}
+	
+	log.Println("PeerConnection initialized with NAT configuration")
 	return peerConnection, nil
 }
 

@@ -16,10 +16,30 @@ import (
 type ConnectionManager struct {
 	connections map[string]*webrtc.PeerConnection
 	mutex       sync.RWMutex
+	publicIP    string // 公网IP配置
+	udpPortMin  uint16 // UDP端口范围最小值
+	udpPortMax  uint16 // UDP端口范围最大值
 }
 
 var connManager = &ConnectionManager{
 	connections: make(map[string]*webrtc.PeerConnection),
+}
+
+// SetPublicIP 设置公网IP
+func SetPublicIP(ip string) {
+	connManager.publicIP = ip
+	if ip != "" {
+		log.Printf("WebSocket handler configured with public IP: %s", ip)
+	}
+}
+
+// SetUDPPortRange 设置UDP端口范围
+func SetUDPPortRange(min, max uint16) {
+	connManager.udpPortMin = min
+	connManager.udpPortMax = max
+	if min > 0 && max > 0 {
+		log.Printf("WebSocket handler configured with UDP port range: %d-%d", min, max)
+	}
 }
 
 // WebSocketHandler 处理 WebSocket 连接
@@ -35,7 +55,16 @@ func WebSocketHandler(ws *websocket.Conn) {
 	}
 
 	// 为每个连接创建独立的PeerConnection
-	peerConnection, err := datachannel.InitializePeerConnection()
+	var peerConnection *webrtc.PeerConnection
+	var err error
+	
+	// 使用完整配置初始化PeerConnection
+	peerConnection, err = datachannel.InitializePeerConnectionWithConfig(
+		connManager.publicIP,
+		connManager.udpPortMin,
+		connManager.udpPortMax,
+	)
+	
 	if err != nil {
 		log.Printf("Failed to initialize peer connection: %v", err)
 		ws.WriteClose(http.StatusInternalServerError)

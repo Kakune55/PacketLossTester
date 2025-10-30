@@ -8,7 +8,10 @@ import (
 )
 
 type Config struct {
-	ListenPort int `json:"listen_port"`
+	ListenPort      int    `json:"listen_port"`
+	PublicIP        string `json:"public_ip,omitempty"`         // 公网IP，用于云服务器NAT环境
+	UDPPortMin      uint16 `json:"udp_port_min,omitempty"`      // UDP端口范围最小值 (0表示随机)
+	UDPPortMax      uint16 `json:"udp_port_max,omitempty"`      // UDP端口范围最大值 (0表示随机)
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -18,7 +21,12 @@ func LoadConfig(path string) (Config, error) {
 		if err := os.MkdirAll("etc", 0755); err != nil {
 			return Config{}, fmt.Errorf("failed to create config directory: %w", err)
 		}
-		defaultConfig := Config{ListenPort: 52611}
+		defaultConfig := Config{
+			ListenPort: 52611,
+			PublicIP:   "",  // 留空表示自动检测，或手动填写公网IP
+			UDPPortMin: 0,   // 0表示使用随机端口
+			UDPPortMax: 0,   // 0表示使用随机端口
+		}
 		configData, err := json.MarshalIndent(defaultConfig, "", "  ")
 		if err != nil {
 			return Config{}, fmt.Errorf("failed to marshal default config: %w", err)
