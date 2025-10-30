@@ -1,0 +1,101 @@
+[
+    {
+        "id": "custom",
+        "name": "自定义",
+        "description": "手动调整参数",
+        "frequency": 32,
+        "size": 1024,
+        "duration": 10
+    },
+    {
+        "id": "voip",
+        "name": "视频通话 (VoIP)",
+        "description": "模拟Zoom/Teams等视频会议流量",
+        "frequency": 50,
+        "size": 250,
+        "duration": 30,
+        "requirements": {
+            "latency": "< 150ms",
+            "jitter": "< 30ms",
+            "packetLoss": "< 1%"
+        }
+    },
+    {
+        "id": "csgo",
+        "name": "CS2 / 反恐精英",
+        "description": "模拟CS2竞技模式网络需求 (128 tick)",
+        "frequency": 128,
+        "size": 1000,
+        "duration": 30,
+        "requirements": {
+            "latency": "< 50ms",
+            "jitter": "< 10ms",
+            "packetLoss": "< 0.5%"
+        }
+    },
+    {
+        "id": "battlefield",
+        "name": "战地风云系列",
+        "description": "模拟战地系列大型多人战场 (60Hz)",
+        "frequency": 60,
+        "size": 2500,
+        "duration": 30,
+        "requirements": {
+            "latency": "< 80ms",
+            "jitter": "< 15ms",
+            "packetLoss": "< 1%"
+        }
+    },
+    {
+        "id": "lol",
+        "name": "英雄联盟 / DOTA2",
+        "description": "模拟MOBA类游戏网络特性",
+        "frequency": 20,
+        "size": 400,
+        "duration": 30,
+        "requirements": {
+            "latency": "< 100ms",
+            "jitter": "< 20ms",
+            "packetLoss": "< 1%"
+        }
+    },
+    {
+        "id": "pubg",
+        "name": "绝地求生 / 吃鸡",
+        "description": "模拟大逃杀类游戏网络需求",
+        "frequency": 30,
+        "size": 1500,
+        "duration": 30,
+        "requirements": {
+            "latency": "< 70ms",
+            "jitter": "< 15ms",
+            "packetLoss": "< 1%"
+        }
+    },
+    {
+        "id": "streaming",
+        "name": "直播推流",
+        "description": "模拟OBS等直播软件推流",
+        "frequency": 120,
+        "size": 8192,
+        "duration": 30,
+        "requirements": {
+            "latency": "< 500ms",
+            "jitter": "< 50ms",
+            "packetLoss": "< 2%"
+        }
+    },
+    {
+        "id": "general",
+        "name": "常规网页浏览",
+        "description": "模拟普通网页浏览流量",
+        "frequency": 5,
+        "size": 8192,
+        "duration": 5,
+        "requirements": {
+            "latency": "< 300ms",
+            "jitter": "< 100ms",
+            "packetLoss": "< 3%"
+        }
+    }
+]

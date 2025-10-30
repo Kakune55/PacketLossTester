@@ -1,5 +1,5 @@
 # 设置程序名称
-$appName = "audio-handler-gateway"
+$appName = "package_loss_tester"
 
 # 创建构建目录
 New-Item -ItemType Directory -Force -Path "builds" | Out-Null

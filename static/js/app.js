@@ -11,9 +11,129 @@ let packetCount = 0;
 let isStressMode = false; // 压测模式标志
 let stressStartTime = 0; // 压测模式开始时间
 
+let latencyStats = {
+    min: Infinity,
+    max: -Infinity,
+    sum: 0,
+    count: 0,
+    values: [],        // 存储所有延迟值用于计算百分位
+    lastLatency: null, // 上一个延迟值，用于计算抖动
+    jitterSum: 0,      // 抖动累计值
+    jitterCount: 0     // 抖动样本数
+};
+
+// 重置统计数据
+function resetLatencyStats() {
+    latencyStats = {
+        min: Infinity,
+        max: -Infinity,
+        sum: 0,
+        count: 0,
+        values: [],
+        lastLatency: null,
+        jitterSum: 0,
+        jitterCount: 0
+    };
+    
+    // 重置显示
+    document.getElementById('avg-latency').innerText = '-';
+    document.getElementById('min-latency').innerText = '-';
+    document.getElementById('max-latency').innerText = '-';
+    document.getElementById('p90-latency').innerText = '-';
+    document.getElementById('jitter').innerText = '-';
+}
+
+// 更新延迟统计
+let statsUpdatePending = false;
+function updateLatencyStats(latency) {
+    latencyStats.sum += latency;
+    latencyStats.count++;
+    latencyStats.values.push(latency);
+    
+    // 计算抖动(Jitter)：当前延迟与上一个延迟的差值的绝对值
+    // 这是网络抖动的标准定义：连续数据包延迟的变化量
+    if (latencyStats.lastLatency !== null) {
+        const jitter = Math.abs(latency - latencyStats.lastLatency);
+        latencyStats.jitterSum += jitter;
+        latencyStats.jitterCount++;
+    }
+    latencyStats.lastLatency = latency;
+    
+    // 只保留最近2000个样本用于计算百分位（避免内存占用过大）
+    if (latencyStats.values.length > 2000) {
+        latencyStats.values.shift();
+    }
+    
+    if (latency < latencyStats.min) latencyStats.min = latency;
+    if (latency > latencyStats.max) latencyStats.max = latency;
+    
+    if (!statsUpdatePending) {
+        statsUpdatePending = true;
+        requestAnimationFrame(() => {
+            // 计算平均延迟
+            const avg = latencyStats.sum / latencyStats.count;
+            
+            // 计算平均抖动
+            const avgJitter = latencyStats.jitterCount > 0 
+                ? latencyStats.jitterSum / latencyStats.jitterCount 
+                : 0;
+            
+            // 计算90百分位（前10%最高延迟的起始值）
+            let p90 = 0;
+            if (latencyStats.values.length > 0) {
+                const sorted = [...latencyStats.values].sort((a, b) => a - b);
+                const p90Index = Math.floor(sorted.length * 0.9);
+                p90 = sorted[p90Index];
+            }
+            
+            // 批量更新UI（高精度显示，保留3位小数）
+            document.getElementById('avg-latency').innerText = avg.toFixed(3);
+            document.getElementById('min-latency').innerText = latencyStats.min.toFixed(3);
+            document.getElementById('max-latency').innerText = latencyStats.max.toFixed(3);
+            document.getElementById('p90-latency').innerText = p90.toFixed(3);
+            document.getElementById('jitter').innerText = avgJitter.toFixed(3);
+            
+            statsUpdatePending = false;
+        });
+    }
+}
+
 const frequency_input = document.getElementById('frequency');
 const size_input = document.getElementById('size');
 const duration_input = document.getElementById('duration');
+
+// 存储预设配置
+let presetsData = {};
+
+// 加载预设配置
+fetch('presets.json')
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`获取预设失败: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        // 转换为键值对格式方便查找
+        data.forEach(preset => {
+            presetsData[preset.id] = preset;
+        });
+        
+        // 填充预设下拉框
+        const presetSelect = document.getElementById('preset');
+        presetSelect.innerHTML = '';
+        
+        data.forEach(preset => {
+            const option = document.createElement('option');
+            option.value = preset.id;
+            option.textContent = preset.name;
+            option.title = preset.description; // 鼠标悬停显示描述
+            presetSelect.appendChild(option);
+        });
+    })
+    .catch(error => {
+        console.error('加载预设配置失败:', error);
+    });
 
 // 获取测试节点列表
 const apiUrl = 'nodes.json';
@@ -52,10 +172,78 @@ const updateValue = (id) => {
     document.getElementById(`${id}-value`).innerText = document.getElementById(id).value;
 };
 
+// 同步滑条到输入框
+const syncRangeToInput = (id) => {
+    const rangeInput = document.getElementById(id);
+    const numberInput = document.getElementById(`${id}-input`);
+    numberInput.value = rangeInput.value;
+    markAsCustom();
+};
+
+// 同步输入框到滑条
+const syncInputToRange = (id) => {
+    const rangeInput = document.getElementById(id);
+    const numberInput = document.getElementById(`${id}-input`);
+    
+    // 验证输入值在范围内
+    let value = parseInt(numberInput.value);
+    const min = parseInt(numberInput.min);
+    const max = parseInt(numberInput.max);
+    
+    if (isNaN(value)) {
+        value = min;
+    } else if (value < min) {
+        value = min;
+    } else if (value > max) {
+        value = max;
+    }
+    
+    numberInput.value = value;
+    rangeInput.value = value;
+    markAsCustom();
+};
+
+// 应用预设
+const applyPreset = () => {
+    const presetSelect = document.getElementById('preset');
+    const presetValue = presetSelect.value;
+    
+    if (presetValue === 'custom') {
+        return; // 自定义模式，不做任何改变
+    }
+    
+    const preset = presetsData[presetValue];
+    if (!preset) return;
+    
+    // 更新滑块和输入框的值
+    document.getElementById('frequency').value = preset.frequency;
+    document.getElementById('frequency-input').value = preset.frequency;
+    
+    document.getElementById('size').value = preset.size;
+    document.getElementById('size-input').value = preset.size;
+    
+    document.getElementById('duration').value = preset.duration;
+    document.getElementById('duration-input').value = preset.duration;
+    
+    // 显示预设描述
+    console.log(`已应用预设: ${preset.name} - ${preset.description}`);
+    if (preset.requirements) {
+        console.log('质量要求:', preset.requirements);
+    }
+};
+
+// 监听参数变化，如果手动修改则切换回自定义
+const markAsCustom = () => {
+    const presetSelect = document.getElementById('preset');
+    if (presetSelect && presetSelect.value !== 'custom') {
+        presetSelect.value = 'custom';
+    }
+};
+
 // 切换压测模式
 const toggleStressMode = () => {
     isStressMode = document.getElementById('stress-mode').checked;
-    const durationGroup = document.getElementById('duration').parentElement;
+    const durationGroup = document.getElementById('duration').parentElement.parentElement;
     
     if (isStressMode) {
         // 禁用持续时间设置
@@ -68,21 +256,31 @@ const toggleStressMode = () => {
     }
 };
 
-const maxsize = 10240;
+const maxsize = 16384; // 扩容到16KB
 
 frequency_input.addEventListener("change", (event) => {
-    if (parseInt(frequency_input.value) > 64) {
-        duration_input.max = 30;
-        size_input.max = 4096;
-        if (parseInt(duration_input.value) == 30) {
-            document.getElementById(`duration-value`).innerText = 30;
+    const freqValue = parseInt(frequency_input.value);
+    if (freqValue > 64) {
+        duration_input.max = 300;
+        size_input.max = 8192;
+        
+        document.getElementById('duration-input').max = 300;
+        document.getElementById('size-input').max = 8192;
+        
+        if (parseInt(duration_input.value) > 300) {
+            duration_input.value = 300;
+            document.getElementById('duration-input').value = 300;
         }
-        if (parseInt(size_input.value) == 4096) {
-            document.getElementById(`size-value`).innerText = 4096;
+        if (parseInt(size_input.value) > 8192) {
+            size_input.value = 8192;
+            document.getElementById('size-input').value = 8192;
         }
     } else {
-        duration_input.max = 180;
+        duration_input.max = 300;
         size_input.max = maxsize;
+        
+        document.getElementById('duration-input').max = 300;
+        document.getElementById('size-input').max = maxsize;
     }
 })
 
@@ -92,8 +290,10 @@ const setStatus = (status) => {
 
 const startSendingData = (frequency, size, totalPackets, duration) => {
     packetCount = 0;
+    resetLatencyStats(); // 重置延迟统计
+    
     if (isStressMode) {
-        stressStartTime = Date.now();
+        stressStartTime = performance.now();
     }
     
     // 启动图表更新定时器，每1秒更新一次
@@ -104,26 +304,48 @@ const startSendingData = (frequency, size, totalPackets, duration) => {
         updateChart();
     }, 500);
     
+    // 使用高精度定时器 - 预先计算时间戳避免在循环中重复调用
+    const intervalMs = 1000 / frequency;
+    let nextSendTime = performance.now() + intervalMs;
+    
+    // 使用 setInterval 但通过时间校准来提高精度
     intervalId = setInterval(() => {
-        // 压测模式下不检查 totalPackets
-        if (!isStressMode && (packetCount >= totalPackets || dataChannel.readyState !== 'open')) {
-            stopTest();
-            return;
-        }
+        const now = performance.now();
         
-        if (dataChannel.readyState !== 'open') {
-            stopTest();
-            return;
+        // 如果我们落后了，尝试补发
+        while (nextSendTime <= now) {
+            // 压测模式下不检查 totalPackets
+            if (!isStressMode && (packetCount >= totalPackets || dataChannel.readyState !== 'open')) {
+                stopTest();
+                return;
+            }
+            
+            if (dataChannel.readyState !== 'open') {
+                stopTest();
+                return;
+            }
+            
+            // 使用当前时间戳而不是预计算的，确保精度
+            const timestamp = performance.now();
+            const packet = `${packetCount},${timestamp}`;
+            
+            // 立即发送，减少缓冲
+            dataChannel.send(packet);
+            sentPacketTimes[packetCount] = { sentTime: timestamp, received: false };
+            packetCount++;
+            
+            nextSendTime += intervalMs;
+            
+            // 避免无限循环，如果落后太多就跳过
+            if (nextSendTime < now - intervalMs * 10) {
+                nextSendTime = now + intervalMs;
+                break;
+            }
         }
-        
-        const packet = `${packetCount},${Date.now()}`;
-        dataChannel.send(packet);
-        sentPacketTimes[packetCount] = { sentTime: Date.now(), received: false };
-        packetCount++;
         
         // 压测模式下，清理10秒前的数据
         if (isStressMode) {
-            const currentTime = Date.now();
+            const currentTime = performance.now();
             const cutoffTime = currentTime - 10000; // 10秒前
             for (let key in sentPacketTimes) {
                 if (sentPacketTimes[key].sentTime < cutoffTime) {
@@ -220,14 +442,32 @@ document.getElementById('start-btn').addEventListener('click', async () => {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
-            ]
+            ],
+            // 优化配置以降低延迟
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require'
         };
         pc = new RTCPeerConnection(configuration);
-        dataChannel = pc.createDataChannel('dataChannel', { ordered: false, maxRetransmits: 0 });
+        
+        // 优化数据通道配置以最小化延迟
+        dataChannel = pc.createDataChannel('dataChannel', { 
+            ordered: false,           // 无序传输，减少延迟
+            maxRetransmits: 0,        // 不重传，避免延迟累积
+            negotiated: false,        // 协商模式
+            protocol: '',             // 无特殊协议
+            // 注意：bufferedAmountLowThreshold 在创建后设置
+        });
+        
+        // 设置发送缓冲区低水位线，减少缓冲延迟
+        dataChannel.bufferedAmountLowThreshold = 0;
 
         dataChannel.onopen = () => {
             console.log("数据通道已打开");
             setStatus('测试中...');
+            
+            // 尝试设置二进制类型为 arraybuffer（虽然我们用字符串）
+            dataChannel.binaryType = 'arraybuffer';
+            
             startSendingData(frequency, size, totalPackets, duration);
         };
 
@@ -266,12 +506,21 @@ document.getElementById('start-btn').addEventListener('click', async () => {
         }
 
         dataChannel.onmessage = (event) => {
-            const [packetIndex, sentTime] = event.data.split(',');
-            const currentTime = Date.now();
-            const latency = currentTime - parseInt(sentTime, 10);
+            // 立即记录接收时间，最小化处理延迟
+            const receiveTime = performance.now();
+            
+            // 使用更快的字符串分割
+            const commaIndex = event.data.indexOf(',');
+            const packetIndex = event.data.substring(0, commaIndex);
+            const sentTime = parseFloat(event.data.substring(commaIndex + 1));
+            
+            const latency = receiveTime - sentTime;
             
             // 只有在记录中存在该包时才处理
             if (sentPacketTimes[packetIndex]) {
+                // 更新实时统计（真实延迟，无滤波）
+                updateLatencyStats(latency);
+                
                 // 非压测模式下才累加 receivedPackets
                 if (!isStressMode && !sentPacketTimes[packetIndex].received) {
                     receivedPackets++;
@@ -377,13 +626,13 @@ const updateChart = () => {
     
     if (isStressMode) {
         // 压测模式：只处理最近10秒的数据（滚动窗口）
-        const currentTime = Date.now();
+        const currentTime = performance.now();
         const cutoffTime = currentTime - 10000; // 10秒前
         
         // 获取所有有效的包索引并排序
         const validKeys = Object.keys(sentPacketTimes)
             .map(k => parseInt(k))
-            .filter(k => sentPacketTimes[k].sentTime >= cutoffTime)
+            .filter(k => sentPacketTimes[k] && sentPacketTimes[k].sentTime >= cutoffTime)
             .sort((a, b) => a - b);
         
         if (validKeys.length === 0) return;

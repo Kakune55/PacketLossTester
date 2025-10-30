@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 设置程序名称
-APP_NAME="audio-handler-gateway"
+APP_NAME="package_loss_tester"
 
 # 构建目录
 BUILD_DIR="builds"

@@ -18,7 +18,7 @@ func LoadConfig(path string) (Config, error) {
 		if err := os.MkdirAll("etc", 0755); err != nil {
 			return Config{}, fmt.Errorf("failed to create config directory: %w", err)
 		}
-		defaultConfig := Config{ListenPort: 8080}
+		defaultConfig := Config{ListenPort: 52611}
 		configData, err := json.MarshalIndent(defaultConfig, "", "  ")
 		if err != nil {
 			return Config{}, fmt.Errorf("failed to marshal default config: %w", err)
