@@ -49,11 +49,28 @@
         }
 
         h2 {
-            margin-top: 0;
-            margin-bottom: var(--spacing);
+            margin: 0;
             font-weight: 600;
             font-size: 1.5rem;
             color: var(--text-primary);
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: var(--spacing);
+        }
+
+        .page-header a {
+            text-decoration: none;
+            color: var(--primary-color);
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .page-header a:hover {
+            text-decoration: underline;
         }
 
         .form-group {
@@ -312,7 +329,10 @@
 
 <body>
     <div id="app">
-        <h2>网络丢包率测试</h2>
+        <div class="page-header">
+            <h2>网络丢包率测试</h2>
+            <a href="/speedtest.html">网络测速</a>
+        </div>
         <div class="form-group">
             <label for="frequency">每秒发送的数据包数量</label>
             <div class="range-container">

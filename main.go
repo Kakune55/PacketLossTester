@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"pltester/config"
+	"pltester/speedtest"
 	"pltester/ws"
 
 	"golang.org/x/net/websocket"
@@ -45,7 +46,7 @@ func main() {
 	} else {
 		log.Println("No public IP configured, using automatic NAT traversal")
 	}
-	
+
 	// 设置UDP端口范围（如果配置了）
 	if cfg.UDPPortMin > 0 && cfg.UDPPortMax > 0 {
 		ws.SetUDPPortRange(cfg.UDPPortMin, cfg.UDPPortMax)
@@ -57,7 +58,10 @@ func main() {
 	// 添加CORS中间件
 	mux := http.NewServeMux()
 	mux.Handle("/ws", websocket.Handler(ws.WebSocketHandler))
-	
+	mux.HandleFunc("/speedtest/download", speedtest.DownloadHandler)
+	mux.HandleFunc("/speedtest/upload", speedtest.UploadHandler)
+	mux.HandleFunc("/speedtest/ping", speedtest.PingHandler)
+
 	// 使用嵌入的文件系统
 	staticSub, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -80,12 +84,12 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		
+
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
+
 		next.ServeHTTP(w, r)
 	})
 }
