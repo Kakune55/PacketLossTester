@@ -10,17 +10,20 @@
     <main class="card card--narrow">
         <header class="header">
             <h1>网络测速</h1>
-            <a class="back-link" href="/">返回丢包测试</a>
+            <div class="header-links">
+                <a class="back-link" href="/">丢包测试</a>
+                <a class="back-link" href="/ipinfo.html">IP 信息</a>
+            </div>
         </header>
         <section class="status-banner" id="status">状态：就绪</section>
         <section class="metrics">
             <div class="metric">
-                <div class="metric-label">10 MB 下载速度</div>
+                <div class="metric-label">下载速度</div>
                 <div class="metric-value" id="download-speed">-</div>
                 <div class="metric-label">Mbps</div>
             </div>
             <div class="metric">
-                <div class="metric-label">10 MB 上传速度</div>
+                <div class="metric-label">上传速度</div>
                 <div class="metric-value" id="upload-speed">-</div>
                 <div class="metric-label">Mbps</div>
             </div>
@@ -52,7 +55,7 @@
         </button>
         <section class="tips">
             <p>提示：</p>
-            <p>测速会针对 100 KB、500 KB、1 MB、10 MB 、100 MB/30 MB 五种数据包场景分别进行上下行测试，前四场景约 30 MB 数据量（小包场景会发送多个包累积到目标总量）。最后一个场景会使用 100 MB 的下载和 30 MB 的上传数据量进行测试。</p>
+            <p>测速会针对 100 KB、500 KB、1 MB、10 MB 四种数据包场景分别进行上下行测试（单场景约 30 MB 数据量），并额外执行 100 MB 下载 / 30 MB 上传的极限大包测试。</p>
             <p>单次测速将产生约 220 MB 下载 + 150 MB 上传流量，请提前确认网络流量计划与带宽占用；建议在测试期间关闭占用带宽的应用，并多次测试取平均值。</p>
         </section>
     </main>

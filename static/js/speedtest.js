@@ -16,31 +16,35 @@ const TEST_CASES = [
     {
         key: "100kb",
         label: "100 KB",
+        displayLabel: "100 KB",
         download: { packetBytes: 100 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
         upload: { packetBytes: 100 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
     },
     {
         key: "500kb",
         label: "500 KB",
+        displayLabel: "500 KB",
         download: { packetBytes: 500 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
         upload: { packetBytes: 500 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
     },
     {
         key: "1mb",
         label: "1 MB",
+        displayLabel: "1 MB",
         download: { packetBytes: 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
         upload: { packetBytes: 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
     },
     {
         key: "10mb",
         label: "10 MB",
+        displayLabel: "10 MB",
         download: { packetBytes: 10 * 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
         upload: { packetBytes: 10 * 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
     },
     {
         key: "peak",
-        label: "Full",
-        displayLabel: "100 MB/30 MB",
+        label: "极限大包",
+        displayLabel: "下载 100 MB / 上传 30 MB",
         download: { packetBytes: PEAK_DOWNLOAD_TOTAL_BYTES, totalBytes: PEAK_DOWNLOAD_TOTAL_BYTES },
         upload: { packetBytes: PEAK_UPLOAD_TOTAL_BYTES, totalBytes: PEAK_UPLOAD_TOTAL_BYTES },
     },
@@ -60,8 +64,14 @@ const describeStage = (direction, label, totalBytes) => {
 
 const stageDescriptions = [
     "延迟探测",
-    ...TEST_CASES.map(({ label, download }) => describeStage("下载", label, download.totalBytes)),
-    ...TEST_CASES.map(({ label, upload }) => describeStage("上传", label, upload.totalBytes)),
+    ...TEST_CASES.map(({ label, displayLabel, download }) => {
+        const name = displayLabel ?? label;
+        return describeStage("下载", name, download.totalBytes);
+    }),
+    ...TEST_CASES.map(({ label, displayLabel, upload }) => {
+        const name = displayLabel ?? label;
+        return describeStage("上传", name, upload.totalBytes);
+    }),
 ];
 const totalStages = stageDescriptions.length;
 let completedStages = 0;
@@ -160,8 +170,8 @@ const initializeCaseTable = () => {
 
     TEST_CASES.forEach((testCase) => {
         const row = document.createElement("tr");
-    const sizeCell = document.createElement("td");
-    sizeCell.textContent = testCase.displayLabel ?? testCase.label;
+        const sizeCell = document.createElement("td");
+        sizeCell.textContent = testCase.displayLabel ?? testCase.label;
 
         const downloadCell = document.createElement("td");
         downloadCell.textContent = "-";
@@ -329,7 +339,8 @@ startBtn.addEventListener("click", async () => {
         const downloadResults = new Map();
         for (const testCase of TEST_CASES) {
             announceStageStart();
-            setStatus(`测试下载速度（${testCase.label}）...`);
+            const label = testCase.displayLabel ?? testCase.label;
+            setStatus(`测试下载速度（${label}）...`);
             const { packetBytes, totalBytes } = testCase.download;
             const downloadMbps = await runDownloadTest(packetBytes, totalBytes);
             downloadResults.set(testCase.key, downloadMbps);
@@ -340,7 +351,8 @@ startBtn.addEventListener("click", async () => {
         const uploadResults = new Map();
         for (const testCase of TEST_CASES) {
             announceStageStart();
-            setStatus(`测试上传速度（${testCase.label}）...`);
+            const label = testCase.displayLabel ?? testCase.label;
+            setStatus(`测试上传速度（${label}）...`);
             const { packetBytes, totalBytes } = testCase.upload;
             const uploadMbps = await runUploadTest(packetBytes, totalBytes);
             uploadResults.set(testCase.key, uploadMbps);

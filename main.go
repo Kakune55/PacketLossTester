@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"pltester/config"
+	"pltester/ipinfo"
 	"pltester/speedtest"
 	"pltester/ws"
 
@@ -56,11 +57,14 @@ func main() {
 	}
 
 	// 添加CORS中间件
+	ipService := ipinfo.NewService(cfg.PublicIP, cfg.IPAPICustomHost)
+
 	mux := http.NewServeMux()
 	mux.Handle("/ws", websocket.Handler(ws.WebSocketHandler))
 	mux.HandleFunc("/speedtest/download", speedtest.DownloadHandler)
 	mux.HandleFunc("/speedtest/upload", speedtest.UploadHandler)
 	mux.HandleFunc("/speedtest/ping", speedtest.PingHandler)
+	mux.HandleFunc("/api/ipinfo", ipService.Handler())
 
 	// 使用嵌入的文件系统
 	staticSub, err := fs.Sub(staticFS, "static")
