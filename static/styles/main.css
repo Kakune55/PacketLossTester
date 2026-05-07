@@ -596,6 +596,13 @@ button:disabled {
     font-weight: 750;
 }
 
+.map-error {
+    margin: 0;
+    padding: 16px;
+    color: var(--ui-red);
+    font-weight: 850;
+}
+
 .leaflet-container {
     font-family: inherit;
 }

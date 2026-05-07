@@ -3,6 +3,8 @@
     const STRESS_WINDOW_MS = 10000;
     const MAX_PERCENTILE_SAMPLES = 2000;
     const CHART_BUCKETS = 120;
+    const CHART_UPDATE_INTERVAL_MS = 2000;
+    const CHART_ANIMATION_MS = 220;
 
     const els = {
         frequency: document.getElementById('frequency'),
@@ -34,10 +36,14 @@
     let currentWebSocket;
     let intervalId;
     let chartUpdateIntervalId;
+    let chartUpdateIdleId;
+    let chartUpdatePending = false;
+    let chartAnimationFrameId;
     let durationTimeoutId;
     let chart;
     let packetCount = 0;
     let isStressMode = false;
+    let isTesting = false;
     let statsUpdatePending = false;
     let presetsData = {};
     const sentPacketTimes = {};
@@ -124,6 +130,43 @@
         Object.keys(sentPacketTimes).forEach((key) => {
             delete sentPacketTimes[key];
         });
+    };
+
+    const closeActiveConnection = () => {
+        if (dataChannel) {
+            dataChannel.onopen = null;
+            dataChannel.onmessage = null;
+            dataChannel.onerror = null;
+            try {
+                dataChannel.close();
+            } catch (error) {
+                console.warn('关闭数据通道失败:', error);
+            }
+            dataChannel = null;
+        }
+
+        if (pc) {
+            pc.onicecandidate = null;
+            try {
+                pc.close();
+            } catch (error) {
+                console.warn('关闭 PeerConnection 失败:', error);
+            }
+            pc = null;
+        }
+
+        if (currentWebSocket) {
+            currentWebSocket.onopen = null;
+            currentWebSocket.onmessage = null;
+            currentWebSocket.onerror = null;
+            currentWebSocket.onclose = null;
+            try {
+                currentWebSocket.close();
+            } catch (error) {
+                console.warn('关闭 WebSocket 失败:', error);
+            }
+            currentWebSocket = null;
+        }
     };
 
     const buildPacket = (index, timestamp, size) => {
@@ -248,14 +291,48 @@
         }
     };
 
+    const scheduleChartUpdate = () => {
+        if (chartUpdatePending) {
+            return;
+        }
+
+        chartUpdatePending = true;
+        const run = () => {
+            chartUpdateIdleId = null;
+            chartUpdatePending = false;
+            updateChart();
+        };
+
+        if (window.requestIdleCallback) {
+            chartUpdateIdleId = window.requestIdleCallback(run, { timeout: 1000 });
+        } else {
+            chartUpdateIdleId = window.setTimeout(run, 0);
+        }
+    };
+
+    const cancelScheduledChartUpdate = () => {
+        if (chartUpdateIdleId === undefined || chartUpdateIdleId === null) {
+            return;
+        }
+
+        if (window.cancelIdleCallback) {
+            window.cancelIdleCallback(chartUpdateIdleId);
+        } else {
+            window.clearTimeout(chartUpdateIdleId);
+        }
+        chartUpdateIdleId = null;
+        chartUpdatePending = false;
+    };
+
     const startSendingData = (frequency, size, totalPackets, duration) => {
         packetCount = 0;
         resetLatencyStats();
 
+        cancelScheduledChartUpdate();
         if (chartUpdateIntervalId) {
             clearInterval(chartUpdateIntervalId);
         }
-        chartUpdateIntervalId = setInterval(updateChart, 500);
+        chartUpdateIntervalId = setInterval(scheduleChartUpdate, CHART_UPDATE_INTERVAL_MS);
 
         const intervalMs = 1000 / frequency;
         let nextSendTime = performance.now() + intervalMs;
@@ -275,7 +352,13 @@
                 }
 
                 const timestamp = performance.now();
-                dataChannel.send(buildPacket(packetCount, timestamp, size));
+                try {
+                    dataChannel.send(buildPacket(packetCount, timestamp, size));
+                } catch (error) {
+                    console.error('发送数据包失败:', error);
+                    stopTest({ status: `发送失败: ${error.message}` });
+                    return;
+                }
                 sentPacketTimes[packetCount] = { sentTime: timestamp, received: false };
                 packetCount++;
                 nextSendTime += intervalMs;
@@ -300,11 +383,11 @@
         }, intervalMs);
 
         if (!isStressMode) {
-            durationTimeoutId = setTimeout(stopTest, duration * 1000);
+            durationTimeoutId = setTimeout(() => stopTest(), duration * 1000);
         }
     };
 
-    const stopTest = () => {
+    const stopTest = ({ status = '测试完成', closeConnection = true } = {}) => {
         if (intervalId) {
             clearInterval(intervalId);
             intervalId = null;
@@ -313,12 +396,14 @@
             clearInterval(chartUpdateIntervalId);
             chartUpdateIntervalId = null;
         }
+        cancelScheduledChartUpdate();
         if (durationTimeoutId) {
             clearTimeout(durationTimeoutId);
             durationTimeoutId = null;
         }
 
-        setStatus('测试完成');
+        isTesting = false;
+        setStatus(status);
         els.startBtn.disabled = false;
         els.stopBtn.style.display = 'none';
 
@@ -330,10 +415,22 @@
             }
         }
         updateChart();
+
+        if (closeConnection) {
+            closeActiveConnection();
+        }
     };
 
     const handleWebSocketMessage = (ws) => async (event) => {
-        const message = JSON.parse(event.data);
+        let message;
+        try {
+            message = JSON.parse(event.data);
+        } catch (error) {
+            console.error('解析信令消息失败:', error);
+            stopTest({ status: `信令解析失败: ${error.message}` });
+            return;
+        }
+
         if (message.candidate) {
             try {
                 await pc.addIceCandidate(new RTCIceCandidate(message));
@@ -344,11 +441,18 @@
         }
 
         if (message.sdp) {
-            await pc.setRemoteDescription(new RTCSessionDescription(message));
-            if (message.type === 'offer') {
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                ws.send(JSON.stringify(pc.localDescription));
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription(message));
+                if (message.type === 'offer') {
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify(pc.localDescription));
+                    }
+                }
+            } catch (error) {
+                console.error('处理信令消息失败:', error);
+                stopTest({ status: `信令处理失败: ${error.message}` });
             }
         }
     };
@@ -382,6 +486,9 @@
     })();
 
     const handleDataChannelMessage = (event) => {
+        if (typeof event.data !== 'string') {
+            return;
+        }
         const receiveTime = performance.now();
         const commaIndex = event.data.indexOf(',');
         if (commaIndex === -1) {
@@ -410,52 +517,34 @@
         updatePacketCounters();
     };
 
+    const getCssColor = (name) => getComputedStyle(document.documentElement)
+        .getPropertyValue(name)
+        .trim();
+
     const initializeChart = () => {
         const ctx = els.chart.getContext('2d');
-        if (chart) {
-            chart.destroy();
+        if (chartAnimationFrameId) {
+            cancelAnimationFrame(chartAnimationFrameId);
+            chartAnimationFrameId = null;
         }
-        chart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: [],
-                datasets: [
-                    {
-                        type: 'bar',
-                        label: '最大延迟 (ms)',
-                        borderColor: '#111111',
-                        backgroundColor: '#fe7da8',
-                        data: [],
-                        order: 2,
-                    },
-                    {
-                        type: 'bar',
-                        label: '平均延迟 (ms)',
-                        borderColor: '#111111',
-                        backgroundColor: '#27ccf3',
-                        data: [],
-                        order: 1,
-                    },
-                ],
+
+        chart = {
+            ctx,
+            labels: [],
+            avg: [],
+            max: [],
+            displayedAvg: [],
+            displayedMax: [],
+            colors: {
+                text: getCssColor('--ui-text') || '#111111',
+                muted: getCssColor('--ui-muted') || '#5f5a4f',
+                border: getCssColor('--ui-border') || '#111111',
+                avg: getCssColor('--ui-blue') || '#27ccf3',
+                max: getCssColor('--ui-pink') || '#fe7da8',
+                grid: 'rgba(17, 17, 17, 0.14)',
             },
-            options: {
-                responsive: true,
-                animation: {
-                    duration: 400,
-                    easing: 'easeOutQuart',
-                },
-                plugins: {
-                    tooltip: {
-                        callbacks: {
-                            label: (context) => {
-                                const value = context.raw;
-                                return value === -1 ? '丢失数据包' : `延迟: ${Number(value).toFixed(3)} ms`;
-                            },
-                        },
-                    },
-                },
-            },
-        });
+        };
+        drawChartFrame(chart.labels, chart.displayedAvg, chart.displayedMax);
     };
 
     const startTest = async () => {
@@ -473,63 +562,82 @@
         const duration = parseInt(els.duration.value, 10);
         const totalPackets = isStressMode ? Infinity : frequency * duration;
 
+        isTesting = true;
         receivedPackets = 0;
         clearPacketTimes();
         els.sentPackets.innerText = '0';
         els.receivedPackets.innerText = '0';
         els.packetLossRate.innerText = '0%';
 
-        currentWebSocket = new WebSocket(els.testNode.value);
+        try {
+            currentWebSocket = new WebSocket(els.testNode.value);
+        } catch (error) {
+            stopTest({ status: `连接失败: ${error.message}` });
+            return;
+        }
+
         currentWebSocket.onopen = async () => {
-            setStatus('连接已建立，准备建立数据通道测试...');
+            try {
+                setStatus('连接已建立，准备建立数据通道测试...');
 
-            pc = new RTCPeerConnection({
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                ],
-                bundlePolicy: 'max-bundle',
-                rtcpMuxPolicy: 'require',
-            });
+                pc = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                    ],
+                    bundlePolicy: 'max-bundle',
+                    rtcpMuxPolicy: 'require',
+                });
 
-            dataChannel = pc.createDataChannel('dataChannel', {
-                ordered: false,
-                maxRetransmits: 0,
-                negotiated: false,
-                protocol: '',
-            });
-            dataChannel.bufferedAmountLowThreshold = 0;
+                dataChannel = pc.createDataChannel('dataChannel', {
+                    ordered: false,
+                    maxRetransmits: 0,
+                    negotiated: false,
+                    protocol: '',
+                });
+                dataChannel.bufferedAmountLowThreshold = 0;
 
-            dataChannel.onopen = () => {
-                setStatus('测试中...');
-                dataChannel.binaryType = 'arraybuffer';
-                startSendingData(frequency, size, totalPackets, duration);
-            };
-            dataChannel.onmessage = handleDataChannelMessage;
+                dataChannel.onopen = () => {
+                    setStatus('测试中...');
+                    dataChannel.binaryType = 'arraybuffer';
+                    startSendingData(frequency, size, totalPackets, duration);
+                };
+                dataChannel.onmessage = handleDataChannelMessage;
+                dataChannel.onerror = (event) => {
+                    console.error('数据通道错误:', event);
+                    stopTest({ status: '数据通道错误' });
+                };
 
-            pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                    currentWebSocket.send(JSON.stringify(event.candidate.toJSON()));
+                pc.onicecandidate = (event) => {
+                    if (event.candidate && currentWebSocket?.readyState === WebSocket.OPEN) {
+                        currentWebSocket.send(JSON.stringify(event.candidate.toJSON()));
+                    }
+                };
+
+                currentWebSocket.onmessage = handleWebSocketMessage(currentWebSocket);
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                if (currentWebSocket.readyState === WebSocket.OPEN) {
+                    currentWebSocket.send(JSON.stringify(pc.localDescription));
                 }
-            };
-
-            currentWebSocket.onmessage = handleWebSocketMessage(currentWebSocket);
-
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            currentWebSocket.send(JSON.stringify(pc.localDescription));
-            initializeChart();
+                initializeChart();
+            } catch (error) {
+                console.error('启动 WebRTC 测试失败:', error);
+                stopTest({ status: `连接失败: ${error.message}` });
+            }
         };
 
         currentWebSocket.onerror = () => {
-            setStatus('连接失败');
-            els.startBtn.disabled = false;
-            els.stopBtn.style.display = 'none';
+            stopTest({ status: '连接失败' });
         };
 
         currentWebSocket.onclose = () => {
-            stopTest();
-            setStatus('连接关闭');
+            if (isTesting) {
+                stopTest({ status: '连接关闭' });
+            } else {
+                currentWebSocket = null;
+            }
         };
     };
 
@@ -565,11 +673,170 @@
             collectChartBuckets(0, Math.max(0, packetCount - 2), sampleSize, labels, dataAvg, dataMax, (index) => index);
         }
 
-        chart.data.labels = labels;
-        chart.data.datasets[0].data = dataMax;
-        chart.data.datasets[1].data = dataAvg;
-        chart.update('active');
+        animateChartUpdate(labels, dataAvg, dataMax);
     }
+
+    const getInterpolatedValue = (fromValues, toValues, index, progress) => {
+        const from = fromValues[index] ?? 0;
+        const to = toValues[index] ?? 0;
+        return from + (to - from) * progress;
+    };
+
+    const easeOutCubic = (value) => 1 - Math.pow(1 - value, 3);
+
+    const animateChartUpdate = (labels, dataAvg, dataMax) => {
+        if (!chart) {
+            return;
+        }
+
+        if (chartAnimationFrameId) {
+            cancelAnimationFrame(chartAnimationFrameId);
+        }
+
+        const fromAvg = chart.displayedAvg;
+        const fromMax = chart.displayedMax;
+        const start = performance.now();
+        chart.labels = labels;
+        chart.avg = dataAvg;
+        chart.max = dataMax;
+
+        const draw = (now) => {
+            const progress = easeOutCubic(Math.min(1, (now - start) / CHART_ANIMATION_MS));
+            chart.displayedAvg = dataAvg.map((_, index) => getInterpolatedValue(fromAvg, dataAvg, index, progress));
+            chart.displayedMax = dataMax.map((_, index) => getInterpolatedValue(fromMax, dataMax, index, progress));
+            drawChartFrame(labels, chart.displayedAvg, chart.displayedMax);
+
+            if (progress < 1) {
+                chartAnimationFrameId = requestAnimationFrame(draw);
+                return;
+            }
+            chartAnimationFrameId = null;
+        };
+
+        chartAnimationFrameId = requestAnimationFrame(draw);
+    };
+
+    const drawChartFrame = (labels, dataAvg, dataMax) => {
+        if (!chart) {
+            return;
+        }
+
+        const canvas = els.chart;
+        const rect = canvas.getBoundingClientRect();
+        const cssWidth = Math.max(320, rect.width || canvas.width);
+        const cssHeight = Math.max(220, rect.height || canvas.height);
+        const dpr = window.devicePixelRatio || 1;
+        const pixelWidth = Math.round(cssWidth * dpr);
+        const pixelHeight = Math.round(cssHeight * dpr);
+
+        if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+            canvas.width = pixelWidth;
+            canvas.height = pixelHeight;
+        }
+
+        const { ctx, colors } = chart;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+        const padding = {
+            top: 34,
+            right: 20,
+            bottom: 36,
+            left: 42,
+        };
+        const plotWidth = Math.max(1, cssWidth - padding.left - padding.right);
+        const plotHeight = Math.max(1, cssHeight - padding.top - padding.bottom);
+        const maxValue = Math.max(1, ...dataAvg, ...dataMax);
+        const yMax = Math.max(1, Math.ceil(maxValue / 2) * 2);
+
+        ctx.lineWidth = 1;
+        ctx.font = '12px Inter, "Noto Sans SC", system-ui, sans-serif';
+        ctx.textBaseline = 'middle';
+
+        for (let i = 0; i <= 4; i++) {
+            const value = (yMax / 4) * i;
+            const y = padding.top + plotHeight - (value / yMax) * plotHeight;
+            ctx.strokeStyle = colors.grid;
+            ctx.beginPath();
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(padding.left + plotWidth, y);
+            ctx.stroke();
+
+            ctx.fillStyle = colors.muted;
+            ctx.textAlign = 'right';
+            ctx.fillText(Number.isInteger(value) ? `${value}` : value.toFixed(1), padding.left - 8, y);
+        }
+
+        ctx.strokeStyle = colors.border;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, padding.top);
+        ctx.lineTo(padding.left, padding.top + plotHeight);
+        ctx.lineTo(padding.left + plotWidth, padding.top + plotHeight);
+        ctx.stroke();
+
+        drawChartLegend(cssWidth, colors);
+
+        if (labels.length === 0) {
+            ctx.fillStyle = colors.muted;
+            ctx.textAlign = 'center';
+            ctx.fillText('等待测试数据', padding.left + plotWidth / 2, padding.top + plotHeight / 2);
+            return;
+        }
+
+        const step = plotWidth / labels.length;
+        const outerBarWidth = Math.max(2, Math.min(10, step * 0.68));
+        const innerBarWidth = Math.max(1, outerBarWidth * 0.62);
+
+        labels.forEach((label, index) => {
+            const x = padding.left + index * step + step / 2;
+            const maxHeight = (dataMax[index] / yMax) * plotHeight;
+            const avgHeight = (dataAvg[index] / yMax) * plotHeight;
+            const baseY = padding.top + plotHeight;
+
+            ctx.fillStyle = colors.max;
+            ctx.fillRect(x - outerBarWidth / 2, baseY - maxHeight, outerBarWidth, maxHeight);
+            ctx.fillStyle = colors.avg;
+            ctx.fillRect(x - innerBarWidth / 2, baseY - avgHeight, innerBarWidth, avgHeight);
+        });
+
+        const labelEvery = Math.max(1, Math.ceil(labels.length / 12));
+        ctx.fillStyle = colors.muted;
+        ctx.textAlign = 'center';
+        labels.forEach((label, index) => {
+            if (index % labelEvery !== 0) {
+                return;
+            }
+            const x = padding.left + index * step + step / 2;
+            ctx.save();
+            ctx.translate(x, padding.top + plotHeight + 18);
+            ctx.rotate(-Math.PI / 5);
+            ctx.fillText(String(label), 0, 0);
+            ctx.restore();
+        });
+    };
+
+    const drawChartLegend = (canvasWidth, colors) => {
+        const { ctx } = chart;
+        const items = [
+            { label: '平均延迟 (ms)', color: colors.avg },
+            { label: '最大延迟 (ms)', color: colors.max },
+        ];
+        ctx.font = '13px Inter, "Noto Sans SC", system-ui, sans-serif';
+        ctx.textBaseline = 'middle';
+        const totalWidth = items.reduce((sum, item) => sum + ctx.measureText(item.label).width + 44, 0);
+        let x = Math.max(12, (canvasWidth - totalWidth) / 2);
+
+        items.forEach((item) => {
+            ctx.fillStyle = item.color;
+            ctx.fillRect(x, 13, 28, 10);
+            x += 36;
+            ctx.fillStyle = colors.muted;
+            ctx.textAlign = 'left';
+            ctx.fillText(item.label, x, 18);
+            x += ctx.measureText(item.label).width + 18;
+        });
+    };
 
     function collectChartBuckets(start, end, sampleSize, labels, dataAvg, dataMax, makeLabel) {
         for (let i = start; i < end; i += sampleSize) {
@@ -610,13 +877,7 @@
     els.stressMode.addEventListener('change', toggleStressMode);
     els.startBtn.addEventListener('click', startTest);
     els.stopBtn.addEventListener('click', () => {
-        stopTest();
-        if (pc) {
-            pc.close();
-        }
-        if (currentWebSocket) {
-            currentWebSocket.close();
-        }
+        stopTest({ status: '测试已停止' });
     });
 
     els.stopBtn.style.display = 'none';

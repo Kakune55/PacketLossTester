@@ -67,6 +67,18 @@ const renderEntry = (slot, entry) => {
     refs.isp.textContent = formatISP(entry);
 };
 
+const createPopupContent = (label, entry) => {
+    const container = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = label;
+    const city = document.createElement("div");
+    city.textContent = safeText(entry.city, "未知城市");
+    const country = document.createElement("div");
+    country.textContent = safeText(entry.country, "未知国家");
+    container.append(title, city, country);
+    return container;
+};
+
 const initMap = (userEntry, serverEntry) => {
     if (!window.L || !mapContainer) {
         return;
@@ -101,7 +113,7 @@ const initMap = (userEntry, serverEntry) => {
             opacity: 0.9,
             fillOpacity: 0.6,
         }).addTo(map);
-        marker.bindPopup(`<strong>${label}</strong><br>${safeText(entry.city, "未知城市")}<br>${safeText(entry.country, "未知国家")}`);
+        marker.bindPopup(createPopupContent(label, entry));
         markers.push(marker);
     };
 
@@ -176,7 +188,10 @@ const loadIpInfo = async () => {
         console.error("Failed to load IP info", error);
         statusEl.textContent = `状态：加载失败 · ${error.message}`;
         if (mapContainer) {
-            mapContainer.innerHTML = "<p style=\"padding:16px;color:#b91c1c;\">无法加载地图数据</p>";
+            const message = document.createElement("p");
+            message.className = "map-error";
+            message.textContent = "无法加载地图数据";
+            mapContainer.replaceChildren(message);
         }
     }
 };

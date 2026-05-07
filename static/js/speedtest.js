@@ -74,7 +74,12 @@ const stageDescriptions = [
     }),
 ];
 const totalStages = stageDescriptions.length;
+const totalTransferBytes = TEST_CASES.reduce((sum, testCase) => (
+    sum + testCase.download.totalBytes + testCase.upload.totalBytes
+), 0);
+const totalProgressUnits = 1 + totalTransferBytes;
 let completedStages = 0;
+let completedProgressUnits = 0;
 
 const clamp01 = (value) => Math.min(Math.max(value, 0), 1);
 
@@ -93,12 +98,14 @@ const updateProgressState = (state, options = {}) => {
 
     const completed = options.completed ?? completedStages;
     const nextStage = options.nextStage ?? stageDescriptions[Math.min(completed, totalStages - 1)] ?? "收尾中";
-    const fraction = clamp01(totalStages === 0 ? 1 : completed / totalStages);
+    const fraction = clamp01(options.fraction ?? (
+        totalProgressUnits === 0 ? 1 : completedProgressUnits / totalProgressUnits
+    ));
 
     if (state === "running") {
-        const width = completed === 0 ? 8 : Math.min(100, Math.max(18, fraction * 100));
+        const width = completedProgressUnits === 0 ? 8 : Math.min(99, Math.max(5, fraction * 100));
         progressFill.style.width = `${width}%`;
-        const percent = completed === 0 ? 5 : Math.min(99, Math.max(5, Math.round(fraction * 100)));
+        const percent = completedProgressUnits === 0 ? 5 : Math.min(99, Math.max(5, Math.round(fraction * 100)));
         progressLabel.textContent = `测速进行中 · ${percent}%`;
         progressHint.textContent = `阶段 ${Math.min(completed + 1, totalStages)}/${totalStages || 1} · ${nextStage}`;
         startBtn.classList.add("is-active");
@@ -116,7 +123,7 @@ const updateProgressState = (state, options = {}) => {
     }
 
     if (state === "error") {
-        const width = completed === 0 ? 8 : Math.min(100, Math.max(18, fraction * 100));
+        const width = completedProgressUnits === 0 ? 8 : Math.min(99, Math.max(5, fraction * 100));
         progressFill.style.width = `${width}%`;
         progressLabel.textContent = "测速失败";
         progressHint.textContent = options.message ?? "请检查网络连接后重试";
@@ -132,8 +139,9 @@ const announceStageStart = () => {
     });
 };
 
-const markStageComplete = () => {
+const markStageComplete = (progressUnits = 0) => {
     completedStages = Math.min(completedStages + 1, totalStages);
+    completedProgressUnits = Math.min(totalProgressUnits, completedProgressUnits + progressUnits);
     const nextStage = completedStages >= totalStages ? undefined : stageDescriptions[completedStages];
     updateProgressState("running", {
         completed: completedStages,
@@ -143,7 +151,16 @@ const markStageComplete = () => {
 
 const resetProgress = () => {
     completedStages = 0;
+    completedProgressUnits = 0;
     updateProgressState("idle");
+};
+
+const recordTransferProgress = (bytes) => {
+    completedProgressUnits = Math.min(totalProgressUnits, completedProgressUnits + Math.max(0, bytes));
+    updateProgressState("running", {
+        completed: completedStages,
+        nextStage: stageDescriptions[Math.min(completedStages, totalStages - 1)],
+    });
 };
 
 const formatNumber = (value, fractionDigits = 2) => {
@@ -214,7 +231,7 @@ const measureLatency = async () => {
     return total / attempts;
 };
 
-const runDownloadTest = async (packetBytes, totalBytes) => {
+const runDownloadTest = async (packetBytes, totalBytes, onProgress) => {
     const packetSize = Math.max(1, Math.floor(packetBytes));
     // 保证每个场景传输的总数据量为 totalBytes（由调用者传入），避免小包场景只测一次导致突发性能。
     const targetBytes = Math.max(1, Math.floor(totalBytes));
@@ -248,6 +265,7 @@ const runDownloadTest = async (packetBytes, totalBytes) => {
         }
 
         remaining -= chunkBytes;
+        onProgress?.(chunkBytes);
     }
 
     const durationSec = (performance.now() - start) / 1000;
@@ -271,7 +289,7 @@ const fillRandomBytes = (target) => {
     }
 };
 
-const runUploadTest = async (packetBytes, totalBytes) => {
+const runUploadTest = async (packetBytes, totalBytes, onProgress) => {
     const packetSize = Math.max(1, Math.floor(packetBytes));
     // 保证每个场景传输的总数据量为 totalBytes（由调用者传入），避免小包场景只测一次导致突发性能。
     const targetBytes = Math.max(1, Math.floor(totalBytes));
@@ -298,6 +316,7 @@ const runUploadTest = async (packetBytes, totalBytes) => {
         uploadedTotal += typeof result.receivedBytes === "number" ? result.receivedBytes : chunkBytes;
 
         remaining -= chunkBytes;
+        onProgress?.(chunkBytes);
     }
 
     const durationSec = (performance.now() - start) / 1000;
@@ -332,7 +351,7 @@ startBtn.addEventListener("click", async () => {
         setStatus("测量延迟...");
         const latency = await measureLatency();
         updateMetric(latencyEl, latency);
-        markStageComplete();
+        markStageComplete(1);
 
         const downloadResults = new Map();
         for (const testCase of TEST_CASES) {
@@ -340,7 +359,7 @@ startBtn.addEventListener("click", async () => {
             const label = testCase.displayLabel ?? testCase.label;
             setStatus(`测试下载速度（${label}）...`);
             const { packetBytes, totalBytes } = testCase.download;
-            const downloadMbps = await runDownloadTest(packetBytes, totalBytes);
+            const downloadMbps = await runDownloadTest(packetBytes, totalBytes, recordTransferProgress);
             downloadResults.set(testCase.key, downloadMbps);
             setCaseResult(testCase.key, "download", downloadMbps);
             markStageComplete();
@@ -352,7 +371,7 @@ startBtn.addEventListener("click", async () => {
             const label = testCase.displayLabel ?? testCase.label;
             setStatus(`测试上传速度（${label}）...`);
             const { packetBytes, totalBytes } = testCase.upload;
-            const uploadMbps = await runUploadTest(packetBytes, totalBytes);
+            const uploadMbps = await runUploadTest(packetBytes, totalBytes, recordTransferProgress);
             uploadResults.set(testCase.key, uploadMbps);
             setCaseResult(testCase.key, "upload", uploadMbps);
             markStageComplete();
