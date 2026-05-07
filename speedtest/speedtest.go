@@ -1,13 +1,13 @@
 package speedtest
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
-	"time"
 )
 
 const (
@@ -49,7 +49,6 @@ func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.FormatInt(sizeBytes, 10))
 	w.Header().Set("Cache-Control", "no-store")
 
-	randSrc := rand.New(rand.NewSource(time.Now().UnixNano()))
 	buf := make([]byte, 64*1024)
 
 	remaining := sizeBytes
@@ -58,14 +57,23 @@ func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 		if remaining < int64(chunk) {
 			chunk = int(remaining)
 		}
-		if _, err := randSrc.Read(buf[:chunk]); err != nil {
-			http.Error(w, "failed to generate payload", http.StatusInternalServerError)
-			return
-		}
+		fillPseudoRandom(buf[:chunk])
 		if _, err := w.Write(buf[:chunk]); err != nil {
 			return
 		}
 		remaining -= int64(chunk)
+	}
+}
+
+func fillPseudoRandom(buf []byte) {
+	for len(buf) >= 8 {
+		binary.LittleEndian.PutUint64(buf, rand.Uint64())
+		buf = buf[8:]
+	}
+	if len(buf) > 0 {
+		var tail [8]byte
+		binary.LittleEndian.PutUint64(tail[:], rand.Uint64())
+		copy(buf, tail[:])
 	}
 }
 

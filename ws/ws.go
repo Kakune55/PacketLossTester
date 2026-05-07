@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"crypto/rand"
 	"log"
 	"net/http"
 	"sync"
@@ -27,6 +28,8 @@ var connManager = &ConnectionManager{
 
 // SetPublicIP 设置公网IP
 func SetPublicIP(ip string) {
+	connManager.mutex.Lock()
+	defer connManager.mutex.Unlock()
 	connManager.publicIP = ip
 	if ip != "" {
 		log.Printf("WebSocket handler configured with public IP: %s", ip)
@@ -35,6 +38,8 @@ func SetPublicIP(ip string) {
 
 // SetUDPPortRange 设置UDP端口范围
 func SetUDPPortRange(min, max uint16) {
+	connManager.mutex.Lock()
+	defer connManager.mutex.Unlock()
 	connManager.udpPortMin = min
 	connManager.udpPortMax = max
 	if min > 0 && max > 0 {
@@ -55,25 +60,24 @@ func WebSocketHandler(ws *websocket.Conn) {
 	}
 
 	// 为每个连接创建独立的PeerConnection
-	var peerConnection *webrtc.PeerConnection
-	var err error
-	
+	publicIP, udpPortMin, udpPortMax := connManager.config()
+
 	// 使用完整配置初始化PeerConnection
-	peerConnection, err = datachannel.InitializePeerConnectionWithConfig(
-		connManager.publicIP,
-		connManager.udpPortMin,
-		connManager.udpPortMax,
-	)
-	
+	peerConnection, err := datachannel.NewPeerConnection(datachannel.Config{
+		PublicIP:   publicIP,
+		UDPPortMin: udpPortMin,
+		UDPPortMax: udpPortMax,
+	})
+
 	if err != nil {
 		log.Printf("Failed to initialize peer connection: %v", err)
 		ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
-	
+
 	// 生成连接ID
 	connID := generateConnectionID()
-	
+
 	// 注册连接
 	connManager.registerConnection(connID, peerConnection)
 	defer connManager.unregisterConnection(connID)
@@ -95,22 +99,22 @@ func WebSocketHandler(ws *websocket.Conn) {
 	for {
 		// 每次读取前重置超时时间（5分钟）
 		ws.SetReadDeadline(time.Now().Add(5 * time.Minute))
-		
+
 		var msg string
 		if err := websocket.Message.Receive(ws, &msg); err != nil {
 			log.Printf("Can't receive from %s: %v", connID, err)
 			return
 		}
-		
+
 		// 验证消息大小
 		if len(msg) > 1024*1024 { // 1MB限制
 			log.Printf("Message too large from %s", connID)
 			ws.WriteClose(http.StatusRequestEntityTooLarge)
 			return
 		}
-		
-		if err := datachannel.HandleSDP(peerConnection, msg, ws); err != nil {
-			log.Printf("Failed to handle SDP for %s: %v", connID, err)
+
+		if err := datachannel.HandleSignal(peerConnection, msg, ws); err != nil {
+			log.Printf("Failed to handle signal for %s: %v", connID, err)
 			return
 		}
 	}
@@ -126,9 +130,13 @@ func validateOrigin(r *http.Request) bool {
 
 // generateConnectionID 生成连接ID
 func generateConnectionID() string {
-	return time.Now().Format("20060102150405") + "-" +
-		   string(rune(time.Now().UnixNano()%26+65)) +
-		   string(rune(time.Now().UnixNano()%26+65))
+	return time.Now().Format("20060102150405") + "-" + rand.Text()
+}
+
+func (cm *ConnectionManager) config() (string, uint16, uint16) {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	return cm.publicIP, cm.udpPortMin, cm.udpPortMax
 }
 
 // registerConnection 注册连接

@@ -258,6 +258,16 @@ const toggleStressMode = () => {
 
 const maxsize = 16384; // 扩容到16KB
 
+const buildPacket = (index, timestamp, size) => {
+    const header = `${index},${timestamp}`;
+    const requestedSize = parseInt(size);
+    const targetSize = Math.max(header.length, Math.min(requestedSize || header.length, maxsize));
+    if (targetSize === header.length) {
+        return header;
+    }
+    return `${header},${'x'.repeat(Math.max(0, targetSize - header.length - 1))}`;
+};
+
 frequency_input.addEventListener("change", (event) => {
     const freqValue = parseInt(frequency_input.value);
     if (freqValue > 64) {
@@ -327,7 +337,7 @@ const startSendingData = (frequency, size, totalPackets, duration) => {
             
             // 使用当前时间戳而不是预计算的，确保精度
             const timestamp = performance.now();
-            const packet = `${packetCount},${timestamp}`;
+            const packet = buildPacket(packetCount, timestamp, size);
             
             // 立即发送，减少缓冲
             dataChannel.send(packet);
@@ -398,7 +408,7 @@ const stopTest = () => {
     updateChart(); // 最后一次更新图表
 };
 
-const handleWebSocketMessage = async (event) => {
+const handleWebSocketMessage = (ws) => async (event) => {
     const message = JSON.parse(event.data);
     if (message.candidate) {
         try {
@@ -512,7 +522,11 @@ document.getElementById('start-btn').addEventListener('click', async () => {
             // 使用更快的字符串分割
             const commaIndex = event.data.indexOf(',');
             const packetIndex = event.data.substring(0, commaIndex);
-            const sentTime = parseFloat(event.data.substring(commaIndex + 1));
+            const secondCommaIndex = event.data.indexOf(',', commaIndex + 1);
+            const sentTimeText = secondCommaIndex === -1
+                ? event.data.substring(commaIndex + 1)
+                : event.data.substring(commaIndex + 1, secondCommaIndex);
+            const sentTime = parseFloat(sentTimeText);
             
             const latency = receiveTime - sentTime;
             
@@ -539,7 +553,7 @@ document.getElementById('start-btn').addEventListener('click', async () => {
             }
         };
 
-        ws.onmessage = handleWebSocketMessage;
+        ws.onmessage = handleWebSocketMessage(ws);
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);

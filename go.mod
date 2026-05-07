@@ -1,8 +1,9 @@
 module pltester
 
-go 1.21.3
+go 1.26
 
 require (
+	github.com/pion/ice/v2 v2.3.24
 	github.com/pion/webrtc/v3 v3.2.42
 	golang.org/x/net v0.26.0
 )
@@ -12,7 +13,6 @@ require (
 	github.com/google/uuid v1.3.1 // indirect
 	github.com/pion/datachannel v1.5.5 // indirect
 	github.com/pion/dtls/v2 v2.2.7 // indirect
-	github.com/pion/ice/v2 v2.3.24 // indirect
 	github.com/pion/interceptor v0.1.25 // indirect
 	github.com/pion/logging v0.2.2 // indirect
 	github.com/pion/mdns v0.0.12 // indirect
