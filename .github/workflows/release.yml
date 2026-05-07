@@ -1,0 +1,104 @@
+name: Release Binaries
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+
+          - goos: linux
+            goarch: arm64
+
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+
+          - goos: darwin
+            goarch: amd64
+
+          - goos: darwin
+            goarch: arm64
+
+          - goos: windows
+            goarch: amd64
+
+          - goos: windows
+            goarch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm || '' }}
+          TAG: ${{ github.event.release.tag_name }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p build dist
+
+          TARGET="${GOOS}-${GOARCH}"
+          if [ -n "${GOARM}" ]; then
+            TARGET="${TARGET}v${GOARM}"
+          fi
+
+          BIN_NAME="${REPO_NAME}"
+          if [ "${GOOS}" = "windows" ]; then
+            BIN_NAME="${REPO_NAME}.exe"
+          fi
+
+          export CGO_ENABLED=0
+          export GOOS="${GOOS}"
+          export GOARCH="${GOARCH}"
+
+          if [ -n "${GOARM}" ]; then
+            export GOARM="${GOARM}"
+          fi
+
+          go build \
+            -trimpath \
+            -ldflags "-s -w -X main.version=${TAG}" \
+            -o "build/${BIN_NAME}" \
+            .
+
+          ASSET_BASE="${REPO_NAME}_${TAG}_${TARGET}"
+
+          if [ "${GOOS}" = "windows" ]; then
+            ASSET_NAME="${ASSET_BASE}.zip"
+            zip -j "dist/${ASSET_NAME}" "build/${BIN_NAME}"
+          else
+            ASSET_NAME="${ASSET_BASE}.tar.gz"
+            tar -C build -czf "dist/${ASSET_NAME}" "${BIN_NAME}"
+          fi
+
+          sha256sum "dist/${ASSET_NAME}" > "dist/${ASSET_NAME}.sha256"
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "${TAG}" dist/* --clobber
