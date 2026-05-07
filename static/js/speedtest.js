@@ -87,7 +87,7 @@ const updateProgressState = (state, options = {}) => {
         progressFill.style.width = "0%";
         progressLabel.textContent = "开始测速";
         progressHint.textContent = "点击启动全流程带宽测试";
-        startBtn.classList.remove("is-active", "is-filled", "is-error");
+        startBtn.classList.remove("is-active", "is-error");
         return;
     }
 
@@ -102,7 +102,6 @@ const updateProgressState = (state, options = {}) => {
         progressLabel.textContent = `测速进行中 · ${percent}%`;
         progressHint.textContent = `阶段 ${Math.min(completed + 1, totalStages)}/${totalStages || 1} · ${nextStage}`;
         startBtn.classList.add("is-active");
-        startBtn.classList.toggle("is-filled", width >= 60 || fraction >= 0.6);
         startBtn.classList.remove("is-error");
         return;
     }
@@ -111,7 +110,7 @@ const updateProgressState = (state, options = {}) => {
         progressFill.style.width = "100%";
         progressLabel.textContent = "测速完成";
         progressHint.textContent = "点击重新开始以再次测试";
-        startBtn.classList.add("is-active", "is-filled");
+        startBtn.classList.add("is-active");
         startBtn.classList.remove("is-error");
         return;
     }
@@ -122,7 +121,6 @@ const updateProgressState = (state, options = {}) => {
         progressLabel.textContent = "测速失败";
         progressHint.textContent = options.message ?? "请检查网络连接后重试";
         startBtn.classList.add("is-active");
-        startBtn.classList.remove("is-filled");
         startBtn.classList.add("is-error");
     }
 };

@@ -19,45 +19,45 @@
             <div class="form-group">
                 <label for="frequency">每秒发送的数据包数量</label>
                 <div class="range-container">
-                    <input type="range" id="frequency" min="1" max="256" value="32" oninput="syncRangeToInput('frequency')">
-                    <input type="number" class="range-input" id="frequency-input" min="1" max="256" value="32" oninput="syncInputToRange('frequency')">
+                    <input type="range" id="frequency" min="1" max="256" value="32">
+                    <input type="number" class="range-input" id="frequency-input" min="1" max="256" value="32">
                 </div>
             </div>
             <div class="form-group">
                 <label for="size">数据包大小 (字节)</label>
                 <div class="range-container">
-                    <input type="range" id="size" min="1" max="16384" value="1024" oninput="syncRangeToInput('size')">
-                    <input type="number" class="range-input" id="size-input" min="1" max="16384" value="1024" oninput="syncInputToRange('size')">
+                    <input type="range" id="size" min="1" max="16384" value="1024">
+                    <input type="number" class="range-input" id="size-input" min="1" max="16384" value="1024">
                 </div>
             </div>
             <div class="form-group">
                 <label for="duration">持续时间 (秒)</label>
                 <div class="range-container">
-                    <input type="range" id="duration" min="1" max="300" value="10" oninput="syncRangeToInput('duration')">
-                    <input type="number" class="range-input" id="duration-input" min="1" max="300" value="10" oninput="syncInputToRange('duration')">
+                    <input type="range" id="duration" min="1" max="300" value="10">
+                    <input type="number" class="range-input" id="duration-input" min="1" max="300" value="10">
                 </div>
             </div>
         </section>
         <section class="interactive-layout">
             <div id="stats">
-                <div>发送的数据包数量: <span id="sent-packets">0</span></div>
-                <div>接收的数据包数量: <span id="received-packets">0</span></div>
-                <div>丢包率: <span id="packet-loss-rate">0%</span></div>
+                <div class="stats-row--plain"><span class="stats-label">发送的数据包数量:</span><span class="stats-value" id="sent-packets">0</span></div>
+                <div class="stats-row--plain"><span class="stats-label">接收的数据包数量:</span><span class="stats-value" id="received-packets">0</span></div>
+                <div class="stats-row--plain"><span class="stats-label">丢包率:</span><span class="stats-value" id="packet-loss-rate">0%</span></div>
                 <div class="stats-divider"></div>
-                <div>平均延迟: <span id="avg-latency">-</span> ms</div>
-                <div>最小延迟: <span id="min-latency">-</span> ms</div>
-                <div>最大延迟: <span id="max-latency">-</span> ms</div>
-                <div>前10%延迟: <span id="p90-latency">-</span> ms</div>
-                <div>抖动(Jitter): <span id="jitter">-</span> ms</div>
+                <div><span class="stats-label">平均延迟:</span><span class="stats-value" id="avg-latency">-</span><span class="stats-unit">ms</span></div>
+                <div><span class="stats-label">最小延迟:</span><span class="stats-value" id="min-latency">-</span><span class="stats-unit">ms</span></div>
+                <div><span class="stats-label">最大延迟:</span><span class="stats-value" id="max-latency">-</span><span class="stats-unit">ms</span></div>
+                <div><span class="stats-label">前10%延迟:</span><span class="stats-value" id="p90-latency">-</span><span class="stats-unit">ms</span></div>
+                <div><span class="stats-label">抖动(Jitter):</span><span class="stats-value" id="jitter">-</span><span class="stats-unit">ms</span></div>
             </div>
             <div class="control-container">
                 <div class="checkbox-group">
-                    <input type="checkbox" id="stress-mode" onchange="toggleStressMode()">
+                    <input type="checkbox" id="stress-mode">
                     <label for="stress-mode">压测模式（无限期测试，保留10秒滚动数据）</label>
                 </div>
                 <div class="form-group">
                     <label for="preset">测试预设</label>
-                    <select id="preset" onchange="applyPreset()">
+                    <select id="preset">
                         <!-- 从 presets.json 动态加载 -->
                     </select>
                 </div>
