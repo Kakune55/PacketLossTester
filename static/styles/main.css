@@ -112,6 +112,7 @@ h1 {
 .control-container,
 #chart-container,
 .metric,
+.speed-options,
 .cases,
 .tips,
 .info-card,
@@ -133,6 +134,33 @@ h1 {
     padding: 12px 14px;
     text-align: center;
     background: var(--ui-surface-2);
+}
+
+.speed-options {
+    margin-bottom: 20px;
+    padding: 14px 16px;
+    background: var(--ui-surface-2);
+}
+
+.speed-mode-toggle {
+    grid-template-columns: 24px minmax(0, 1fr);
+    align-items: center;
+    color: var(--ui-text);
+}
+
+.speed-mode-toggle strong {
+    display: block;
+    font-size: 0.95rem;
+    font-weight: 950;
+}
+
+.speed-mode-toggle small {
+    display: block;
+    margin-top: 2px;
+    color: var(--ui-muted);
+    font-size: 0.82rem;
+    font-weight: 750;
+    line-height: 1.35;
 }
 
 .form-grid {

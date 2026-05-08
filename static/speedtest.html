@@ -16,6 +16,15 @@
             </div>
         </header>
         <section class="status-banner" id="status">状态：就绪</section>
+        <section class="speed-options">
+            <label class="checkbox-group speed-mode-toggle" for="high-speed-mode">
+                <input type="checkbox" id="high-speed-mode">
+                <span>
+                    <strong>高速网络模式</strong>
+                    <small>累计数据量 x10，用于内网、大带宽链路</small>
+                </span>
+            </label>
+        </section>
         <section class="metrics">
             <div class="metric">
                 <div class="metric-label">下载速度</div>
@@ -56,7 +65,8 @@
         <section class="tips">
             <p>提示：</p>
             <p>测速会针对 100 KB、500 KB、1 MB、10 MB 四种数据包场景分别进行上下行测试（单场景约 30 MB 数据量），并额外执行 100 MB 下载 / 30 MB 上传的极限大包测试。</p>
-            <p>单次测速将产生约 220 MB 下载 + 150 MB 上传流量，请提前确认网络流量计划与带宽占用；建议在测试期间关闭占用带宽的应用，并多次测试取平均值。</p>
+            <p id="traffic-summary">单次测速将产生约 220 MB 下载 + 150 MB 上传流量。</p>
+            <p>请提前确认网络流量计划与带宽占用；建议在测试期间关闭占用带宽的应用，并多次测试取平均值。</p>
         </section>
     </main>
     <script src="/js/speedtest.js"></script>

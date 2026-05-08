@@ -1,26 +1,41 @@
 package speedtest
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
-	"math/rand/v2"
 	"net/http"
 	"strconv"
 )
 
 const (
 	defaultDownloadSizeMB = 10.0
-	maxDownloadSizeMB     = 100.0
-	maxUploadSizeMB       = 100.0
+	maxDownloadSizeMB     = 1024.0
+	maxUploadSizeMB       = 1024.0
+	defaultChunkBytes     = 64 * 1024
+	maxChunkBytes         = 100 * 1024 * 1024
 )
+
+var downloadPayload = newDownloadPayload(defaultChunkBytes)
 
 type uploadResponse struct {
 	ReceivedBytes int64 `json:"receivedBytes"`
 }
 
-// DownloadHandler streamed random payload to benchmark downstream throughput.
+func newDownloadPayload(size int) []byte {
+	buf := make([]byte, size)
+	for i := range buf {
+		buf[i] = byte((i*31 + 17) & 0xff)
+	}
+	return buf
+}
+
+func parsePositiveInt64(raw string) (int64, bool) {
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	return parsed, err == nil && parsed > 0
+}
+
+// DownloadHandler streams a reusable payload to benchmark downstream throughput.
 func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -29,7 +44,7 @@ func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 
 	sizeBytes := int64(defaultDownloadSizeMB * 1024 * 1024)
 	if raw := r.URL.Query().Get("bytes"); raw != "" {
-		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+		if parsed, ok := parsePositiveInt64(raw); ok {
 			sizeBytes = parsed
 		}
 	} else if raw := r.URL.Query().Get("size"); raw != "" {
@@ -45,36 +60,54 @@ func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	if sizeBytes < 1 {
 		sizeBytes = 1
 	}
+
+	chunkBytes := int64(defaultChunkBytes)
+	if raw := r.URL.Query().Get("chunk"); raw != "" {
+		if parsed, ok := parsePositiveInt64(raw); ok {
+			chunkBytes = parsed
+		}
+	}
+	if chunkBytes > maxChunkBytes {
+		chunkBytes = maxChunkBytes
+	}
+	if chunkBytes < 1 {
+		chunkBytes = 1
+	}
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(sizeBytes, 10))
 	w.Header().Set("Cache-Control", "no-store")
 
-	buf := make([]byte, 64*1024)
-
+	flusher, _ := w.(http.Flusher)
 	remaining := sizeBytes
 	for remaining > 0 {
-		chunk := len(buf)
-		if remaining < int64(chunk) {
-			chunk = int(remaining)
+		logicalChunk := chunkBytes
+		if remaining < logicalChunk {
+			logicalChunk = remaining
 		}
-		fillPseudoRandom(buf[:chunk])
-		if _, err := w.Write(buf[:chunk]); err != nil {
+		if !writePayloadChunk(w, logicalChunk) {
 			return
 		}
-		remaining -= int64(chunk)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		remaining -= logicalChunk
 	}
 }
 
-func fillPseudoRandom(buf []byte) {
-	for len(buf) >= 8 {
-		binary.LittleEndian.PutUint64(buf, rand.Uint64())
-		buf = buf[8:]
+func writePayloadChunk(w http.ResponseWriter, sizeBytes int64) bool {
+	remaining := sizeBytes
+	for remaining > 0 {
+		writeBytes := len(downloadPayload)
+		if remaining < int64(writeBytes) {
+			writeBytes = int(remaining)
+		}
+		if _, err := w.Write(downloadPayload[:writeBytes]); err != nil {
+			return false
+		}
+		remaining -= int64(writeBytes)
 	}
-	if len(buf) > 0 {
-		var tail [8]byte
-		binary.LittleEndian.PutUint64(tail[:], rand.Uint64())
-		copy(buf, tail[:])
-	}
+	return true
 }
 
 // UploadHandler drains the request body to benchmark upstream throughput.
