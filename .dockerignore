@@ -1,0 +1,11 @@
+.git
+.github
+.kilo
+node_modules
+build
+builds
+dist
+config.json
+*.exe
+*.test
+*.out

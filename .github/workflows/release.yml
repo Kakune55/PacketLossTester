@@ -8,7 +8,13 @@ permissions:
   contents: write
 
 jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+    permissions:
+      contents: read
+
   build:
+    needs: check
     name: Build ${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }}
     runs-on: ubuntu-latest
 
