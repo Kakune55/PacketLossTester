@@ -372,6 +372,10 @@ button {
     transition: transform var(--transition), box-shadow var(--transition), background var(--transition);
 }
 
+button[hidden] {
+    display: none;
+}
+
 button:hover:not(:disabled) {
     transform: translate(1px, 1px);
     box-shadow: 2px 2px 0 var(--ui-shadow);
@@ -519,6 +523,11 @@ button:disabled {
     overflow: hidden;
     background: var(--ui-pink);
     flex-direction: column;
+}
+
+#cancel-test {
+    width: 100%;
+    margin-top: 12px;
 }
 
 .progress-trigger .progress-visual {
