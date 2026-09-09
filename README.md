@@ -138,47 +138,10 @@ docker run -d --network host -v /etc/packLossTester:/app/etc --name pltester kak
 
 #### 2. 防火墙配置
 
-##### 阿里云 ECS
-
-```bash
-# 开放WebSocket端口
-sudo firewall-cmd --permanent --add-port=52611/tcp
-
-# 开放UDP端口范围
-sudo firewall-cmd --permanent --add-port=50000-50100/udp
-
-# 重载防火墙
-sudo firewall-cmd --reload
-```
-
-**或者在阿里云控制台 → 安全组规则中添加:**
-
 | 协议 | 端口范围 | 授权对象 | 说明 |
 |------|----------|----------|------|
 | TCP | 52611 | 0.0.0.0/0 | WebSocket服务 |
 | UDP | 50000-50100 | 0.0.0.0/0 | WebRTC数据通道 |
-
-##### 腾讯云 CVM
-
-```bash
-# 开放WebSocket端口
-sudo ufw allow 52611/tcp
-
-# 开放UDP端口范围
-sudo ufw allow 50000:50100/udp
-
-# 重载防火墙
-sudo ufw reload
-```
-
-**或者在腾讯云控制台 → 安全组 → 入站规则中添加**
-
-##### AWS EC2
-
-在 **Security Groups** 中添加入站规则:
-
-- TCP: 52611
-- UDP: 50000-50100
 
 #### 3. 环境变量方式 (可选)
 
