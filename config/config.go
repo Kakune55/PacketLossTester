@@ -13,15 +13,19 @@ import (
 )
 
 type Config struct {
-	ListenPort      int    `json:"listen_port"`
-	PublicIP        string `json:"public_ip,omitempty"`          // 公网IP，用于云服务器NAT环境
-	UDPPortMin      uint16 `json:"udp_port_min,omitempty"`       // UDP端口范围最小值 (0表示随机)
-	UDPPortMax      uint16 `json:"udp_port_max,omitempty"`       // UDP端口范围最大值 (0表示随机)
-	IPAPICustomHost string `json:"ip_api_custom_host,omitempty"` // 可选 ip-api 兼容服务的基础 URL（包含 API 路径及认证查询参数）
+	Nodes           []Node   `json:"nodes"`
+	AllowedOrigins  []string `json:"allowed_origins"`
+	ListenPort      int      `json:"listen_port"`
+	PublicIP        string   `json:"public_ip,omitempty"`          // 公网IP，用于云服务器NAT环境
+	UDPPortMin      uint16   `json:"udp_port_min,omitempty"`       // UDP端口范围最小值 (0表示随机)
+	UDPPortMax      uint16   `json:"udp_port_max,omitempty"`       // UDP端口范围最大值 (0表示随机)
+	IPAPICustomHost string   `json:"ip_api_custom_host,omitempty"` // 可选 ip-api 兼容服务的基础 URL（包含 API 路径及认证查询参数）
 }
 
 func LoadConfig(path string) (Config, error) {
 	defaultConfig := Config{
+		Nodes:           DefaultNodes(),
+		AllowedOrigins:  []string{"*"},
 		ListenPort:      52611,
 		PublicIP:        "", // 留空表示自动检测，或手动填写公网IP
 		UDPPortMin:      0,  // 0表示使用随机端口
@@ -68,6 +72,9 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("udp_port_max must be greater than or equal to udp_port_min")
 	}
 	if _, err := ParseIPAPIHost(cfg.IPAPICustomHost); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.validateNodesAndOrigins(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
