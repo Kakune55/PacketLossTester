@@ -2,9 +2,11 @@ package ws
 
 import (
 	"crypto/rand"
+	"errors"
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pltester/datachannel"
@@ -12,6 +14,54 @@ import (
 	"github.com/pion/webrtc/v3"
 	"golang.org/x/net/websocket"
 )
+
+const (
+	maxSignalBytes       = 1 << 20
+	maxDataChannels      = 1
+	writeTimeout         = datachannel.SignalWriteTimeout
+	pingInterval         = 30 * time.Second
+	closePolicyViolation = 1008
+	closeMessageTooBig   = 1009
+	closeInternalError   = 1011
+	closeOverloaded      = 1013
+)
+
+var pingCodec = websocket.Codec{
+	Marshal: func(interface{}) ([]byte, byte, error) {
+		return nil, websocket.PingFrame, nil
+	},
+}
+
+// Pong frames are consumed internally by x/net/websocket, not returned by
+// Receive. A fixed read deadline would kill healthy, idle signaling sessions.
+func keepAlive(ws *websocket.Conn, interval time.Duration) func() {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				if err := ws.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+					ws.Close()
+					return
+				}
+				if err := pingCodec.Send(ws, nil); err != nil {
+					ws.Close()
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
+}
 
 // 连接管理器
 type ConnectionManager struct {
@@ -49,13 +99,25 @@ func SetUDPPortRange(min, max uint16) {
 
 // WebSocketHandler 处理 WebSocket 连接
 func WebSocketHandler(ws *websocket.Conn) {
-	// 移除固定超时，改为使用心跳机制
 	defer ws.Close()
+	ws.MaxPayloadBytes = maxSignalBytes
+	ws.SetReadDeadline(time.Time{})
+	ws.SetWriteDeadline(time.Now().Add(writeTimeout))
+	stopHeartbeat := keepAlive(ws, pingInterval)
+	defer stopHeartbeat()
+	var closeOnce sync.Once
+	fail := func(code int) {
+		closeOnce.Do(func() {
+			ws.SetWriteDeadline(time.Now().Add(writeTimeout))
+			ws.WriteClose(code)
+			ws.Close()
+		})
+	}
 
 	// 验证Origin
 	if !validateOrigin(ws.Request()) {
 		log.Printf("Invalid origin from %s", ws.Request().RemoteAddr)
-		ws.WriteClose(http.StatusForbidden)
+		fail(closePolicyViolation)
 		return
 	}
 
@@ -71,7 +133,7 @@ func WebSocketHandler(ws *websocket.Conn) {
 
 	if err != nil {
 		log.Printf("Failed to initialize peer connection: %v", err)
-		ws.WriteClose(http.StatusInternalServerError)
+		fail(closeInternalError)
 		return
 	}
 
@@ -81,40 +143,63 @@ func WebSocketHandler(ws *websocket.Conn) {
 	// 注册连接
 	connManager.registerConnection(connID, peerConnection)
 	defer connManager.unregisterConnection(connID)
+	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		switch state {
+		case webrtc.PeerConnectionStateClosed:
+			go fail(1000)
+		case webrtc.PeerConnectionStateFailed:
+			go fail(closeInternalError)
+		}
+	})
 
 	datachannel.HandleICECandidate(peerConnection, ws)
 
+	var channelCount atomic.Uint32
+	var echoFailed atomic.Bool
 	peerConnection.OnDataChannel(func(d *webrtc.DataChannel) {
+		// Bound the lifetime count too, so channel churn cannot exhaust resources.
+		if channelCount.Add(1) > maxDataChannels {
+			if echoFailed.Swap(true) {
+				return
+			}
+			log.Printf("Too many data channels for connection %s", connID)
+			go fail(closePolicyViolation)
+			return
+		}
 		d.OnOpen(func() {
 			log.Println("Data channel opened for connection:", connID)
 		})
 		d.OnMessage(func(msg webrtc.DataChannelMessage) {
-			if err := d.SendText(string(msg.Data)); err != nil {
+			if echoFailed.Load() {
+				return // The session is already being closed with an explicit error.
+			}
+			if err := datachannel.Echo(d, msg); err != nil {
+				echoFailed.Store(true)
 				log.Printf("Failed to send message for connection %s: %v", connID, err)
+				code := closeInternalError
+				if errors.Is(err, datachannel.ErrEchoOverloaded) {
+					code = closeOverloaded
+				}
+				// Closing the peer synchronously from its callback can deadlock.
+				go fail(code)
 			}
 		})
 	})
 
 	// 消息处理循环 - 支持长时间连接
 	for {
-		// 每次读取前重置超时时间（5分钟）
-		ws.SetReadDeadline(time.Now().Add(5 * time.Minute))
-
 		var msg string
 		if err := websocket.Message.Receive(ws, &msg); err != nil {
 			log.Printf("Can't receive from %s: %v", connID, err)
-			return
-		}
-
-		// 验证消息大小
-		if len(msg) > 1024*1024 { // 1MB限制
-			log.Printf("Message too large from %s", connID)
-			ws.WriteClose(http.StatusRequestEntityTooLarge)
+			if errors.Is(err, websocket.ErrFrameTooLarge) {
+				fail(closeMessageTooBig)
+			}
 			return
 		}
 
 		if err := datachannel.HandleSignal(peerConnection, msg, ws); err != nil {
 			log.Printf("Failed to handle signal for %s: %v", connID, err)
+			fail(closePolicyViolation)
 			return
 		}
 	}
@@ -149,10 +234,11 @@ func (cm *ConnectionManager) registerConnection(id string, pc *webrtc.PeerConnec
 // unregisterConnection 注销连接
 func (cm *ConnectionManager) unregisterConnection(id string) {
 	cm.mutex.Lock()
-	defer cm.mutex.Unlock()
-	if pc, exists := cm.connections[id]; exists {
+	pc := cm.connections[id]
+	delete(cm.connections, id)
+	cm.mutex.Unlock()
+	if pc != nil {
 		pc.Close()
-		delete(cm.connections, id)
 	}
 }
 

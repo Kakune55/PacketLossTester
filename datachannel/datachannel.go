@@ -2,14 +2,50 @@ package datachannel
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/pion/ice/v2"
 	"github.com/pion/webrtc/v3"
 	"golang.org/x/net/websocket"
 )
+
+const MaxEchoBufferedAmount uint64 = 1 << 20
+
+// Keep this longer than the WS heartbeat interval: the library also writes
+// automatic Pong replies using the connection's shared write deadline.
+const SignalWriteTimeout = 40 * time.Second
+
+var ErrEchoOverloaded = errors.New("data channel echo buffer limit exceeded")
+
+type echoChannel interface {
+	BufferedAmount() uint64
+	Send([]byte) error
+	SendText(string) error
+}
+
+// Echo must be called serially per channel, as Pion's OnMessage does.
+// Reject overload explicitly rather than silently biasing packet-loss results.
+func Echo(d echoChannel, msg webrtc.DataChannelMessage) error {
+	buffered := d.BufferedAmount()
+	if buffered > MaxEchoBufferedAmount || uint64(len(msg.Data)) > MaxEchoBufferedAmount-buffered {
+		return ErrEchoOverloaded
+	}
+	if msg.IsString {
+		return d.SendText(string(msg.Data))
+	}
+	return d.Send(msg.Data)
+}
+
+func sendSignal(ws *websocket.Conn, msg string) error {
+	if err := ws.SetWriteDeadline(time.Now().Add(SignalWriteTimeout)); err != nil {
+		return err
+	}
+	return websocket.Message.Send(ws, msg)
+}
 
 type signalMessage struct {
 	Type          string  `json:"type"`
@@ -108,8 +144,9 @@ func HandleICECandidate(peerConnection *webrtc.PeerConnection, ws *websocket.Con
 			log.Println("Failed to marshal ICE candidate:", err)
 			return
 		}
-		if err := websocket.Message.Send(ws, string(candidateJSON)); err != nil {
+		if err := sendSignal(ws, string(candidateJSON)); err != nil {
 			log.Println("Failed to send ICE candidate:", err)
+			ws.Close()
 		}
 	})
 }
@@ -163,7 +200,7 @@ func handleSessionDescription(peerConnection *webrtc.PeerConnection, sdp webrtc.
 		if err != nil {
 			return fmt.Errorf("failed to marshal answer: %w", err)
 		}
-		if err := websocket.Message.Send(ws, string(answerJSON)); err != nil {
+		if err := sendSignal(ws, string(answerJSON)); err != nil {
 			return fmt.Errorf("failed to send answer: %w", err)
 		}
 	case webrtc.SDPTypeAnswer:
