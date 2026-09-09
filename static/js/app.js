@@ -48,11 +48,13 @@
     let statsIntervalId;
     let drainTimeoutId;
     let connectionTimeoutId;
+    let nodePicker;
 
     const lockControls = (locked) => {
         [els.frequency, els.frequencyInput, els.size, els.sizeInput,
-            els.duration, els.durationInput, els.preset, els.testNode, els.stressMode]
+            els.duration, els.durationInput, els.preset, els.stressMode]
             .forEach((el) => { el.disabled = locked; });
+        nodePicker.setLocked(locked);
         if (!locked) toggleStressMode();
     };
 
@@ -79,7 +81,8 @@
     };
 
     const setStatus = (status) => {
-        els.status.innerText = `状态: ${status}`;
+        const node = activeRun?.config.nodeName;
+        els.status.innerText = `状态: ${status}${node ? ` · ${node}` : ''}`;
     };
 
     const closeActiveConnection = () => {
@@ -227,21 +230,15 @@
         }
     };
 
-    const loadNodes = async () => {
+    const loadNodes = () => {
         els.startBtn.disabled = true;
-        try {
-            const response = await fetch('nodes.json');
-            if (!response.ok) {
-                throw new Error(`获取节点失败: ${response.status}`);
-            }
-
-            const data = await response.json();
-            els.testNode.replaceChildren(...data.map((item) => createOption(item.url, item.name)));
-            els.startBtn.disabled = isTesting || data.length === 0;
-        } catch (error) {
-            console.error('加载节点失败:', error);
-            setStatus(`节点加载失败: ${error.message}`);
-        }
+        nodePicker = window.TestNodes.create({
+            capability: 'packetloss',
+            select: els.testNode,
+            probeButton: document.getElementById('probe-nodes'),
+            status: document.getElementById('node-status'),
+            onChange: (node) => { els.startBtn.disabled = isTesting || !node; },
+        });
     };
 
     const scheduleChartUpdate = () => {
@@ -393,7 +390,7 @@
         activeRun = null;
         closeActiveConnection();
         lockControls(false);
-        els.startBtn.disabled = !els.testNode.value;
+        els.startBtn.disabled = !nodePicker.selected;
         els.stopBtn.style.display = 'none';
     };
 
@@ -509,7 +506,8 @@
 
     const startTest = async () => {
         if (isTesting) return;
-        if (!els.testNode.value) {
+        const node = nodePicker.selected;
+        if (!node) {
             setStatus('没有可用测试节点');
             return;
         }
@@ -530,7 +528,8 @@
         isTesting = true;
         lockControls(true);
         const run = {
-            config: Object.freeze({ frequency, size, duration, stress: isStressMode, node: els.testNode.value }),
+            config: Object.freeze({ frequency, size, duration, stress: isStressMode,
+                node: window.TestNodes.endpoint(node, '/ws', true), nodeName: node.name }),
             remoteCandidates: [], localCandidates: [], offerSent: false,
         };
         activeRun = run;

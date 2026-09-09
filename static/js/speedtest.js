@@ -18,6 +18,9 @@ const REQUEST_TIMEOUT_MS = 125_000;
 let activeController = null;
 let activeXHR = null;
 let lastProgressRender = 0;
+let runNode = null;
+
+const testEndpoint = (path) => window.TestNodes.endpoint(runNode ?? nodePicker.selected, path);
 
 const cancelRequests = () => {
     activeController?.abort();
@@ -31,7 +34,7 @@ const withTimedFetch = async (url, consume, timeout = REQUEST_TIMEOUT_MS) => {
     activeController = controller;
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
-        const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        const response = await fetch(url, { cache: "no-store", credentials: "omit", signal: controller.signal });
         if (!response.ok) throw new Error(`测速请求失败 (${response.status})`);
         return await consume(response);
     } catch (error) {
@@ -258,7 +261,7 @@ const formatNumber = (value, fractionDigits = 2) => {
 };
 
 const setStatus = (message) => {
-    statusEl.textContent = `状态：${message}`;
+    statusEl.textContent = `状态：${message}${runNode ? ` · ${runNode.name}` : ""}`;
 };
 
 const updateMetric = (element, value) => {
@@ -308,7 +311,7 @@ const measureLatency = async () => {
     let total = 0;
     for (let i = 0; i < attempts; i++) {
         const start = performance.now();
-        await withTimedFetch(`/speedtest/ping?ts=${Date.now()}`, (response) => response.json(), 10_000);
+        await withTimedFetch(testEndpoint(`/speedtest/ping?ts=${Date.now()}`), (response) => response.json(), 10_000);
         total += performance.now() - start;
     }
     return total / attempts;
@@ -319,7 +322,7 @@ const runDownloadTest = async (chunkBytes, totalBytes, onProgress) => {
     const targetBytes = Math.max(1, Math.floor(totalBytes));
     let receivedTotal = 0;
     const start = performance.now();
-    await withTimedFetch(`/speedtest/download?bytes=${targetBytes}&chunk=${chunkSize}`, async (response) => {
+    await withTimedFetch(testEndpoint(`/speedtest/download?bytes=${targetBytes}&chunk=${chunkSize}`), async (response) => {
         if (response.body && response.body.getReader) {
             const reader = response.body.getReader();
             try {
@@ -397,7 +400,7 @@ const runUploadTest = async (chunkSize, totalBytes, onProgress) => {
         let reportedBytes = 0;
         const start = performance.now();
 
-        xhr.open("POST", "/speedtest/upload", true);
+        xhr.open("POST", testEndpoint("/speedtest/upload"), true);
         xhr.timeout = REQUEST_TIMEOUT_MS;
         xhr.onloadend = () => { activeXHR = null; };
         xhr.setRequestHeader("Content-Type", "application/octet-stream");
@@ -440,6 +443,15 @@ configureTestPlan();
 resetProgress();
 updateModeCopy();
 
+startBtn.disabled = true;
+const nodePicker = window.TestNodes.create({
+    capability: "speedtest",
+    select: document.getElementById("testNode"),
+    probeButton: document.getElementById("probe-nodes"),
+    status: document.getElementById("node-status"),
+    onChange: (node) => { startBtn.disabled = !!runNode || !node; },
+});
+
 highSpeedModeEl?.addEventListener("change", () => {
     configureTestPlan();
     resetProgress();
@@ -447,10 +459,12 @@ highSpeedModeEl?.addEventListener("change", () => {
 });
 
 startBtn.addEventListener("click", async () => {
-    if (startBtn.disabled) {
+    if (startBtn.disabled || runNode || !nodePicker.selected) {
         return;
     }
     startBtn.blur();
+    runNode = Object.freeze({ ...nodePicker.selected });
+    nodePicker.setLocked(true);
     startBtn.disabled = true;
     document.getElementById("cancel-test").hidden = false;
     if (highSpeedModeEl) {
@@ -514,7 +528,9 @@ startBtn.addEventListener("click", async () => {
         cancelRequests();
         uploadPayloadCache.clear();
         document.getElementById("cancel-test").hidden = true;
-        startBtn.disabled = false;
+        runNode = null;
+        nodePicker.setLocked(false);
+        startBtn.disabled = !nodePicker.selected;
         if (highSpeedModeEl) {
             highSpeedModeEl.disabled = false;
         }

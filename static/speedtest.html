@@ -11,12 +11,20 @@
         <header class="header">
             <h1>网络测速</h1>
             <div class="header-links">
-                <a class="back-link" href="/">丢包测试</a>
+                <a class="back-link" href="/" data-node-link>丢包测试</a>
                 <a class="back-link" href="/ipinfo.html">IP 信息</a>
             </div>
         </header>
         <section class="status-banner" id="status">状态：就绪</section>
         <section class="speed-options">
+            <div class="form-group node-picker">
+                <div class="node-picker-header">
+                    <label for="testNode">测试节点</label>
+                    <button id="probe-nodes" type="button" disabled>检测可达性</button>
+                </div>
+                <select id="testNode" aria-describedby="node-status" disabled></select>
+                <p id="node-status" class="node-status" role="status">加载节点...</p>
+            </div>
             <label class="checkbox-group speed-mode-toggle" for="high-speed-mode">
                 <input type="checkbox" id="high-speed-mode">
                 <span>
@@ -37,7 +45,7 @@
                 <div class="metric-label">Mbps</div>
             </div>
             <div class="metric">
-                <div class="metric-label">往返延迟</div>
+                <div class="metric-label">HTTP 往返延迟</div>
                 <div class="metric-value" id="latency">-</div>
                 <div class="metric-label">ms</div>
             </div>
@@ -55,7 +63,7 @@
                 <tbody id="case-results-body"></tbody>
             </table>
         </section>
-        <button id="start-test" class="progress-trigger">
+        <button id="start-test" class="progress-trigger" disabled>
             <span class="progress-visual">
                 <span class="progress-fill" id="progress-fill"></span>
             </span>
@@ -71,6 +79,7 @@
             <p>请提前确认网络流量计划与带宽占用；建议在测试期间关闭占用带宽的应用，并多次测试取平均值。</p>
         </section>
     </main>
+    <script src="/js/nodes.js"></script>
     <script src="/js/speedtest.js"></script>
 </body>
 </html>

@@ -62,6 +62,51 @@ docker run -d --network host -v /etc/packLossTester:/app/etc --name pltester kak
 - 服务应返回 HTTP 200 和 ip-api 格式 JSON：成功时 `status` 为 `success`，`query` 为 IP，地理和运营商信息使用 `country`、`regionName`、`city`、`lat`、`lon`、`isp`、`org`、`as`、`asname`、`timezone`；失败时返回 `status: "fail"` 和 `message`。不兼容或缺失 `status` 的响应不视为成功。
 - 返回给前端的成功结果中，`source` 为所配置服务的主机名（默认 `ip-api.com`），不包含端口、路径、用户名或认证查询参数。它标识查询服务，不验证服务返回数据的真实来源。
 
+### 多节点配置
+
+主站通过 `GET /api/nodes` 提供节点目录，浏览器直接连接所选节点，主站不转发测试流量。在主站的 `etc/config.json` 中添加 `nodes`，修改后重启即可生效，无需重新编译：
+
+```json
+{
+  "listen_port": 52611,
+  "nodes": [
+    {
+      "id": "local",
+      "name": "本机节点",
+      "baseUrl": ""
+    },
+    {
+      "id": "hk-01",
+      "name": "香港一号",
+      "region": "香港",
+      "baseUrl": "https://hk.example.com",
+      "capabilities": ["packetloss", "speedtest"]
+    }
+  ]
+}
+```
+
+- `nodes` 省略或为空时默认使用本机节点。旧的 `static/nodes.json` 已移除，自定义节点请迁移到此配置。
+- `id` 是唯一且稳定的标识，只允许英文字母、数字、`-` 和 `_`；`name` 必填，`region` 可选。
+- `baseUrl` 留空表示当前站点；外部节点必须是完整 HTTP(S) 地址，可以包含路径前缀，例如 `https://hk.example.com/test`。不允许认证信息、查询参数或 fragment。HTTPS 主站不能选择 HTTP 节点。
+- `capabilities` 省略时同时支持两类测试，也可只声明 `packetloss` 或 `speedtest`。它控制目录展示，不会关闭节点上的实际接口。
+- 节点需提供约定的 `/ws`、`/speedtest/ping`、`/speedtest/download`、`/speedtest/upload` 路径；有前缀时追加在前缀下，由反向代理转发。HTTP 探测接口应返回 `{"ok":true}`，只提供丢包测试的节点也需要此探测接口。
+- 两个测试页面共享节点选择，浏览器会记忆节点 ID；可使用 `/?node=hk-01` 或 `/speedtest.html?node=hk-01` 分享指定节点。URL 参数只接受目录内的 ID，不接受自定义服务地址。
+- “检测可达性”由浏览器按最多 3 个节点并发，每节点进行 3 次 HTTP 探测（每次最多 2 秒），全部成功时展示中位数；失败显示不可达，不自动切换节点。这不是 WebRTC RTT 或带宽预估。开始测试会停止探测，并锁定本轮节点直到结算结束。
+
+每个远端节点仍独立部署本程序，设置自己的公网 IP、UDP 端口和 HTTPS/WSS。为允许主站跨域访问，可在远端节点配置精确的主站 Origin：
+
+```json
+{
+  "listen_port": 52611,
+  "allowed_origins": ["https://test.example.com", "https://hk.example.com"]
+}
+```
+
+名单同时用于 HTTP CORS 和 WebSocket 升级前检查。Origin 不包含路径或末尾斜杠；若节点也提供独立页面，应加入它自己的 Origin。省略 `allowed_origins` 默认保持公开节点行为（`["*"]`）；显式 `[]` 拒绝所有带 Origin 的请求。无 Origin 的普通 HTTP 请求仍允许，Origin 白名单不是身份认证，也不能阻止伪造请求的非浏览器客户端。
+
+测速路由应绕过 CDN 缓存，关闭压缩和内容转换；WebSocket 需要支持升级，WebRTC 的 UDP 端口应直达节点。不要将测试流量绕经主站代理，否则结果会混入中转链路影响。
+
 ## 云服务器配置指南
 
 ### 问题说明

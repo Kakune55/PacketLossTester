@@ -22,12 +22,19 @@ function harness() {
         });
         return elements.get(id);
     }
-    element('testNode').value = 'wss://example.test/ws';
+    element('testNode').value = 'node-a';
+    const picker = {
+        selected: { id: 'node-a', name: '节点 A', baseUrl: 'https://example.test/edge' },
+        setLocked(locked) {
+            element('testNode').disabled = locked;
+            element('probe-nodes').disabled = locked;
+        },
+    };
     element('frequency').max = element('frequency-input').max = '256';
     element('size').max = element('size-input').max = '16384';
     class WebSocket {
         static OPEN = 1;
-        constructor() { this.readyState = 1; this.sent = []; sockets.push(this); }
+        constructor(url) { this.url = url; this.readyState = 1; this.sent = []; sockets.push(this); }
         send(value) { this.sent.push(value); }
         close() { this.closed = true; }
     }
@@ -57,6 +64,12 @@ function harness() {
     const context = {
         document: { getElementById: element, createElement: () => ({}), documentElement: {} },
         PacketMeasurement: api, WebSocket, RTCPeerConnection,
+        TestNodes: {
+            create({ onChange }) { onChange(picker.selected); return picker; },
+            endpoint(node, path, websocket) {
+                return `${websocket ? node.baseUrl.replace(/^http/, 'ws') : node.baseUrl}${path}`;
+            },
+        },
         RTCSessionDescription: function (value) { return value; },
         RTCIceCandidate: function (value) { return value; },
         performance: { now: () => now }, console,
@@ -71,7 +84,7 @@ function harness() {
     context.window = context;
     vm.runInNewContext(fs.readFileSync(`${__dirname}/../static/js/app.js`, 'utf8'), context);
     return {
-        element, sockets, peers,
+        element, sockets, peers, picker,
         click: (id) => element(id).listeners.click(),
         async connect(bufferedAmount = 0) {
             await this.click('start-btn');
@@ -222,4 +235,25 @@ test('remote candidates arriving before SDP are queued until the answer is appli
     await socket.onmessage({ data: JSON.stringify({ type: 'answer', sdp: 'test' }) });
     assert.equal(peer.candidates.length, 1);
     assert.equal(peer.candidates[0].candidate, 'candidate:test');
+});
+
+test('packet test uses the selected endpoint and preserves its result identity', async () => {
+    const h = harness();
+    const channel = await h.connect();
+    assert.equal(h.sockets[0].url, 'wss://example.test/edge/ws');
+    assert.equal(h.element('testNode').disabled, true);
+    assert.equal(h.element('probe-nodes').disabled, true);
+    h.picker.selected = { id: 'node-b', name: '节点 B', baseUrl: 'https://other.test' };
+    channel.onmessage({ data: channel.sent[0] });
+    h.tick(1000);
+    assert.match(h.element('status').innerText, /节点 A/);
+    assert.equal(h.element('testNode').disabled, false);
+});
+
+test('packet test cannot start without a compatible node', async () => {
+    const h = harness();
+    h.picker.selected = null;
+    await h.click('start-btn');
+    assert.equal(h.sockets.length, 0);
+    assert.match(h.element('status').innerText, /没有可用测试节点/);
 });
