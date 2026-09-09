@@ -166,27 +166,6 @@ h1 {
     overflow-wrap: anywhere;
 }
 
-.speed-mode-toggle {
-    grid-template-columns: 24px minmax(0, 1fr);
-    align-items: center;
-    color: var(--ui-text);
-}
-
-.speed-mode-toggle strong {
-    display: block;
-    font-size: 0.95rem;
-    font-weight: 950;
-}
-
-.speed-mode-toggle small {
-    display: block;
-    margin-top: 2px;
-    color: var(--ui-muted);
-    font-size: 0.82rem;
-    font-weight: 750;
-    line-height: 1.35;
-}
-
 .form-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

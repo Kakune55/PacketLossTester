@@ -4,6 +4,27 @@ const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
 
 function setup() {
+    let now = 0;
+    let timerId = 0;
+    const timers = new Map();
+    const schedule = (fn, delay, repeat = false) => {
+        const id = ++timerId;
+        timers.set(id, { fn, at: now + delay, delay, repeat });
+        return id;
+    };
+    const advance = (ms) => {
+        const end = now + ms;
+        while (true) {
+            const next = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+            if (!next) break;
+            const [id, timer] = next;
+            now = timer.at;
+            if (timer.repeat) timer.at += timer.delay;
+            else timers.delete(id);
+            timer.fn();
+        }
+        now = end;
+    };
     const elements = new Map();
     const element = () => ({ style: {}, classList: { add() {}, remove() {} }, listeners: {}, children: [],
         set textContent(value) { this.text = value; this.children = []; },
@@ -27,7 +48,9 @@ function setup() {
     }
     const context = vm.createContext({
         Blob, AbortController, Uint8Array, XMLHttpRequest: XHR,
-        setTimeout, clearTimeout, performance, console,
+        setTimeout: schedule, clearTimeout: (id) => timers.delete(id),
+        setInterval: (fn, delay) => schedule(fn, delay, true), clearInterval: (id) => timers.delete(id),
+        performance: { now: () => now }, console,
         window: { crypto: require('node:crypto').webcrypto,
             addEventListener(event, fn) { windowListeners[event] = fn; }, TestNodes: {
             create({ onChange }) { onChange(picker.selected); return picker; },
@@ -42,7 +65,7 @@ function setup() {
         },
     });
     vm.runInContext(readFileSync(require('node:path').join(__dirname, '../static/js/speedtest.js'), 'utf8'), context);
-    return { context, picker, elements, xhrs, windowListeners,
+    return { context, picker, elements, xhrs, windowListeners, advance, timers,
         run: (code) => vm.runInContext(code, context), xhr: () => xhr };
 }
 
@@ -60,8 +83,8 @@ test('XHR serial resource sizes, reuse, timing, progress and server byte count',
     let summary;
     s.context.progress = (bytes) => progress.push(bytes);
     s.context.summary = (value) => { summary = value; };
-    const promise = s.run('runUploadTest(3, 10, progress, summary)');
-    for (const [index, size] of [3, 3, 3, 1].entries()) {
+    const promise = s.run('runUploadTest(3, 100, progress, summary)');
+    for (const [index, size] of [3, 3, 3, 3].entries()) {
         assert.equal(s.xhrs.length, index + 1);
         const xhr = s.xhr();
         assert.equal(xhr.body.size, size);
@@ -73,10 +96,13 @@ test('XHR serial resource sizes, reuse, timing, progress and server byte count',
         finishUpload(xhr);
         await flush();
     }
-    assert.equal(await promise, 0.0008);
+    assert.equal(await promise, 0.00096);
     assert.equal(summary.requestCount, 4);
     assert.equal(summary.averageMs, 25);
-    assert.equal(progress.reduce((a, b) => a + b, 0), 10);
+    assert.equal(summary.totalBytes, 12);
+    assert.equal(summary.durationMs, 100);
+    assert.equal(progress.reduce((a, b) => a + b, 0), 12);
+    assert.equal(s.timers.size, 0);
     assert.equal(s.xhrs[0].body, s.xhrs[1].body);
     assert.equal(s.run('uploadPayloadCache.size'), 1);
     assert.equal(s.run('getUploadPayload(3).size'), 3);
@@ -105,27 +131,28 @@ test('fetch deadline includes response body and supports cancellation', async ()
             }),
         });
         const promise = s.run('withTimedFetch("/ping", r => r.json(), 20)');
+        await Promise.resolve();
         if (cancel) {
             await Promise.resolve();
             s.run('cancelRequests()');
-        }
+        } else s.advance(20);
         await assert.rejects(promise, /取消或超时/);
         assert.equal(s.run('activeController'), null);
     }
 });
 
-test('download checks final byte count and progress accounting is unthrottled', async () => {
+test('download checks final byte count', async () => {
     const s = setup();
     s.context.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
     await assert.rejects(s.run('runDownloadTest(1, 5)'), /不完整/);
-    s.run('completedProgressUnits = 0; for (let i = 0; i < 100; i++) recordTransferProgress(1)');
-    assert.equal(s.run('completedProgressUnits'), 100);
+    assert.equal(s.timers.size, 0);
 });
 
-test('progress rendering stays throttled to 100ms without losing byte accounting', () => {
+test('progress rendering stays throttled to 100ms and follows time, not bytes', () => {
     const s = setup();
     let now = 99;
     s.context.performance = { now: () => now };
+    s.run('transferStage = { start: 0, windowMs: 5000 }; completedStages = 1');
     s.run('recordTransferProgress(5)');
     assert.equal(s.run('lastProgressRender'), 0);
     now = 100;
@@ -137,7 +164,8 @@ test('progress rendering stays throttled to 100ms without losing byte accounting
     now = 200;
     s.run('recordTransferProgress(13)');
     assert.equal(s.run('lastProgressRender'), 200);
-    assert.equal(s.run('completedProgressUnits'), 36);
+    assert.equal(s.run('completedStages'), 1);
+    assert.equal(parseFloat(s.elements.get('progress-fill').style.width), 1.04 / 11 * 100);
 });
 
 test('download uses the selected node with no cross-origin credentials', async () => {
@@ -147,24 +175,19 @@ test('download uses the selected node with no cross-origin credentials', async (
         request = { url, options };
         return { ok: true, arrayBuffer: async () => new ArrayBuffer(4) };
     };
-    await s.run('runDownloadTest(65536, 4)');
+    await s.run('runDownloadTest(4, 0)');
     assert.match(request.url, /^https:\/\/node\.example\.test\/edge\/speedtest\/download\?bytes=4&request=/);
     assert.equal(request.options.credentials, 'omit');
     assert.equal(request.options.cache, 'no-store');
 });
 
-test('plans use exact whole resources and high speed multiplies counts only', () => {
+test('plans use fixed resources and a uniform ten-second window', () => {
     const s = setup();
     const normal = s.run('getTestCases()');
-    s.elements.get('high-speed-mode').checked = true;
-    const high = s.run('getTestCases()');
-    for (const [i, count] of [308, 62, 30, 3, 1].entries()) {
+    for (let i = 0; i < normal.length; i++) {
         for (const direction of ['download', 'upload']) {
-            assert.equal(normal[i][direction].count, count);
-            assert.equal(normal[i][direction].totalBytes, count * normal[i][direction].resourceBytes);
-            assert.equal(high[i][direction].count, count * 10);
-            assert.equal(high[i][direction].resourceBytes, normal[i][direction].resourceBytes);
-            assert.equal(high[i][direction].totalBytes, normal[i][direction].totalBytes * 10);
+            assert.equal(normal[i][direction].windowMs, 10000);
+            assert.deepEqual(Object.keys(normal[i][direction]).sort(), ['resourceBytes', 'windowMs']);
         }
     }
     assert.equal(normal[4].download.resourceBytes, 100 * 1024 * 1024);
@@ -191,17 +214,21 @@ test('download waits for full bodies, uses unique independent GETs and aggregate
             finishBody = () => { now += 40; resolve(new ArrayBuffer(Number(new URL(url).searchParams.get('bytes')))); };
         }) };
     };
-    const promise = s.run('runDownloadTest(3, 8, progress, summary)');
+    const promise = s.run('runDownloadTest(3, 100, progress, summary)');
     for (let i = 0; i < 3; i++) {
         await flush();
         assert.equal(requests.length, i + 1);
         s.picker.selected = { baseUrl: 'https://other.test' };
         finishBody();
     }
-    assert.equal(await promise, 64 / 0.12 / 1_000_000);
+    assert.equal(await promise, 72 / 0.12 / 1_000_000);
     assert.equal(summary.requestCount, 3);
     assert.equal(summary.averageMs, 40);
-    assert.deepEqual(progress, [3, 3, 2]);
+    assert.equal(summary.totalBytes, 9);
+    assert.equal(summary.durationMs, 120);
+    assert.deepEqual(progress, [3, 3, 3]);
+    await flush();
+    assert.equal(requests.length, 3);
     assert.equal(new Set(requests.map(({ url }) => url)).size, 3);
     for (const { url, options } of requests) {
         assert.match(url, /^https:\/\/node\.example\.test\/edge\//);
@@ -255,7 +282,10 @@ test('streamed download progress spans resources and cancellation between resour
         requests++;
         let reads = 0;
         return { ok: true, body: { getReader: () => ({
-            read: async () => ++reads <= 2 ? { value: new Uint8Array(2), done: false } : { done: true },
+            read: async () => {
+                s.advance(2);
+                return ++reads <= 2 ? { value: new Uint8Array(2), done: false } : { done: true };
+            },
             releaseLock() { released++; },
         }) } };
     };
@@ -273,11 +303,11 @@ test('streamed download progress spans resources and cancellation between resour
 
 test('case cells retain Mbps and reset clears the per-resource summary', () => {
     const s = setup();
-    s.run('setCaseResult("100kb", "download", 12.345, { requestCount: 308, averageMs: 4.25 })');
+    s.run('setCaseResult("100kb", "download", 12.345, { requestCount: 2, averageMs: 4.25, totalBytes: 204800 })');
     const cell = s.run('caseRows.get("100kb").downloadCell');
     assert.equal(cell.textContent, '12.35');
     assert.equal(cell.children[0].className, 'case-request-time');
-    assert.match(cell.children[0].textContent, /4.3 ms.*308/);
+    assert.match(cell.children[0].textContent, /4.3 ms.*2 次.*200 KB/);
     s.run('resetCaseResults()');
     assert.equal(cell.textContent, '-');
     assert.equal(cell.children.length, 1);
@@ -299,7 +329,6 @@ test('a running speed test freezes its node and unlocks after cancellation', asy
     };
     const running = s.elements.get('start-test').listeners.click();
     assert.equal(s.picker.locked, true);
-    assert.equal(s.elements.get('high-speed-mode').disabled, true);
     s.picker.selected = { id: 'b', name: '节点 B', baseUrl: 'https://other.test' };
     assert.match(requests[0], /^https:\/\/node\.example\.test\/edge\/speedtest\/ping/);
     assert.equal(s.run('testEndpoint("/speedtest/upload")'), 'https://node.example.test/edge/speedtest/upload');
@@ -308,12 +337,94 @@ test('a running speed test freezes its node and unlocks after cancellation', asy
     await running;
     assert.equal(s.picker.locked, false);
     assert.equal(s.elements.get('start-test').disabled, false);
-    assert.equal(s.elements.get('high-speed-mode').disabled, false);
     assert.match(s.elements.get('status').textContent, /请求已取消或超时.*节点 A/);
     const restarted = s.elements.get('start-test').listeners.click();
     assert.equal(s.run('cancelled'), false);
+    assert.equal(s.run('activeTestCases[0].download.windowMs'), 10000);
+    assert.equal(s.run('completedStages'), 0);
     await flush();
     s.run('cancelRequests()');
     await restarted;
     assert.equal(requests.length, 2);
+});
+
+test('window deadline waits for upload response with low-frequency progress and no new request', async () => {
+    const s = setup();
+    let summary;
+    s.context.summary = (value) => { summary = value; };
+    s.run('completedStages = totalStages - 1');
+    const pending = s.run('runUploadTest(102400, 5000, recordTransferProgress, summary)');
+    s.advance(1000);
+    s.xhr().upload.onprogress({ lengthComputable: true, loaded: 102400 });
+    s.advance(4000);
+    assert.match(s.elements.get('progress-hint').textContent, /窗口已到.*等待当前资源完成.*等待响应/);
+    assert.ok(parseFloat(s.elements.get('progress-fill').style.width) < 100);
+    assert.equal(s.run('completedStages'), 10);
+    assert.equal(summary, undefined);
+    assert.equal(s.xhrs.length, 1);
+    s.advance(2000);
+    finishUpload(s.xhr());
+    assert.equal(await pending, 102400 * 8 / 7 / 1_000_000);
+    assert.equal(summary.totalBytes, 102400);
+    assert.equal(summary.durationMs, 7000);
+    assert.equal(summary.averageMs, 7000);
+    assert.equal(summary.requestCount, 1);
+    assert.equal(s.xhrs.length, 1);
+    assert.equal(s.timers.size, 0);
+});
+
+test('request window admits before deadline, excludes exact deadline, and always starts once', async () => {
+    for (const [windowMs, durations] of [[5000, [4999, 2]], [5000, [5000]], [0, [20]]]) {
+        const s = setup();
+        let requests = 0;
+        let summary;
+        s.context.request = async (size) => {
+            assert.equal(size, 102400);
+            assert.ok(requests < durations.length, 'no request may start at or after deadline');
+            s.advance(durations[requests++]);
+            return size;
+        };
+        s.context.summary = (value) => { summary = value; };
+        const mbps = await s.run(`runResourceRequests(102400, ${windowMs}, request, summary)`);
+        const durationMs = durations.reduce((sum, ms) => sum + ms, 0);
+        assert.equal(requests, durations.length);
+        assert.equal(summary.requestCount, requests);
+        assert.equal(summary.totalBytes, requests * 102400);
+        assert.equal(summary.durationMs, durationMs);
+        assert.equal(summary.averageMs, durationMs / requests);
+        assert.equal(mbps, requests * 102400 * 8 / (durationMs / 1000) / 1_000_000);
+        assert.equal(s.timers.size, 0);
+    }
+});
+
+test('download safety timeout and manual cancel discard partial resource after window', async () => {
+    for (const cancel of [false, true]) {
+        const s = setup();
+        let summary;
+        let requests = 0;
+        s.context.summary = (value) => { summary = value; };
+        s.context.fetch = async (_url, { signal }) => {
+            requests++;
+            let reads = 0;
+            return { ok: true, body: { getReader: () => ({
+                read: async () => {
+                    if (++reads === 1) return { value: new Uint8Array(1), done: false };
+                    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+                },
+                releaseLock() {},
+            }) } };
+        };
+        const pending = s.run('runDownloadTest(3, 5000, recordTransferProgress, summary)');
+        const rejection = assert.rejects(pending, /取消或超时/);
+        await flush();
+        s.advance(5000);
+        assert.match(s.elements.get('progress-hint').textContent, /等待当前资源完成/);
+        assert.equal(s.run('activeController.signal.aborted'), false);
+        if (cancel) s.elements.get('cancel-test').listeners.click();
+        else s.advance(120000);
+        await rejection;
+        assert.equal(summary, undefined);
+        assert.equal(requests, 1);
+        assert.equal(s.timers.size, 0);
+    }
 });

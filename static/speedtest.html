@@ -25,13 +25,6 @@
                 <select id="testNode" aria-describedby="node-status" disabled></select>
                 <p id="node-status" class="node-status" role="status">加载节点...</p>
             </div>
-            <label class="checkbox-group speed-mode-toggle" for="high-speed-mode">
-                <input type="checkbox" id="high-speed-mode">
-                <span>
-                    <strong>高速网络模式</strong>
-                    <small>请求次数 x10，单个资源大小不变</small>
-                </span>
-            </label>
         </section>
         <section class="metrics">
             <div class="metric">
@@ -72,13 +65,13 @@
         </button>
         <button id="cancel-test" hidden>取消测速</button>
         <section class="tips">
-            <p id="traffic-summary">单次测速将产生约 220 MB 下载 + 150 MB 上传流量。</p>
+            <p id="traffic-summary">流量随带宽变化，无法预先保证固定流量。默认每方向每场景 10 秒，10 个阶段共 100 秒发起窗口，另加 3 次 ping 和当前资源的尾部等待时间。</p>
             <p>每个资源独立请求，串行重复测试；结果同时展示有效传输速度与单资源平均耗时。</p>
             <details>
                 <summary>测试说明</summary>
-                <p>100 KB 对应代码资源体积，500 KB 对应小图片，1 MB 对应大图片，10 MB 对应文件。每个场景上下行各累计约 30 MB，按完整资源数量向上取整；另有单资源 100 MB 下载 / 30 MB 上传作为吞吐参考。大小按 1024 进制计算。</p>
-                <p>HTTP/2 可以复用连接，但每个资源仍是独立请求。耗时包含请求及响应完成的开销；使用禁用缓存的测试载荷，不模拟实际脚本执行、图片解码、页面并发加载或渲染。</p>
-                <p>高速模式增加请求次数，不放大资源。单个请求服务端限时 2 分钟，整场可能更久，可随时取消。请确认流量计划，并关闭其他占用带宽的应用。</p>
+                <p>100 KB 对应代码资源体积，500 KB 对应小图片，1 MB 对应大图片，10 MB 对应文件；另有单资源 100 MB 下载 / 30 MB 上传作为吞吐参考。全部场景按时间窗口串行发起完整资源请求，至少一次；窗口到期不再发起新请求，等待当前资源完整传完。大小按 1024 进制计算。</p>
+                <p>结果显示实际完成的流量、次数及单资源平均耗时。Mbps 按完整资源字节数除以包含尾部等待的总耗时计算。HTTP/2 可以复用连接，但每个资源仍是独立请求。耗时包含请求及响应完成的开销；使用禁用缓存的测试载荷，不模拟实际脚本执行、图片解码、页面并发加载或渲染。</p>
+                <p>每方向每场景统一使用 10 秒发起窗口，整场并非固定 100 秒。单个请求客户端限时 125 秒、服务端限时 2 分钟；可随时取消，未完成资源不计为成功。请确认流量计划，并关闭其他占用带宽的应用。</p>
             </details>
         </section>
     </main>
