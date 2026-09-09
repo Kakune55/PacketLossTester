@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"pltester/config"
 )
 
 const (
@@ -52,9 +54,10 @@ type lookupOptions struct {
 
 // Service encapsulates lookup logic and caching for server metadata.
 type Service struct {
-	httpClient *http.Client
-	serverHint string
-	apiBaseURL string
+	httpClient  *http.Client
+	serverHint  string
+	apiBaseURL  *url.URL
+	apiURLError error
 
 	mu              sync.RWMutex
 	cachedServer    Entry
@@ -64,17 +67,15 @@ type Service struct {
 // NewService constructs an IP info service.
 func NewService(serverIPHint string, customAPIHost string) *Service {
 	client := &http.Client{Timeout: defaultTimeout}
-	baseURL := strings.TrimSpace(customAPIHost)
-	if baseURL == "" {
-		baseURL = defaultIPAPIBaseURL
-	}
-	if !strings.HasSuffix(baseURL, "/") {
-		baseURL += "/"
+	baseURL, err := config.ParseIPAPIHost(customAPIHost)
+	if baseURL == nil && err == nil {
+		baseURL, _ = url.Parse(defaultIPAPIBaseURL)
 	}
 	return &Service{
-		httpClient: client,
-		serverHint: strings.TrimSpace(serverIPHint),
-		apiBaseURL: baseURL,
+		httpClient:  client,
+		serverHint:  strings.TrimSpace(serverIPHint),
+		apiBaseURL:  baseURL,
+		apiURLError: err,
 	}
 }
 
@@ -212,6 +213,10 @@ func (s *Service) serverEntry(ctx context.Context) Entry {
 func (s *Service) lookup(ctx context.Context, ip string, opts lookupOptions) Entry {
 	ip = strings.TrimSpace(ip)
 	entry := Entry{IP: ip}
+	if s.apiURLError != nil {
+		entry.Message = s.apiURLError.Error()
+		return entry
+	}
 
 	var target string
 	var parsed net.IP
@@ -247,30 +252,33 @@ func (s *Service) lookup(ctx context.Context, ip string, opts lookupOptions) Ent
 		return entry
 	}
 
-	requestURL := s.apiBaseURL
+	requestURL := *s.apiBaseURL
+	basePath := requestURL.EscapedPath()
+	if !strings.HasSuffix(basePath, "/") {
+		basePath += "/"
+	}
 	if target != "" {
 		entry.IP = target
-		requestURL = requestURL + url.PathEscape(target)
+		basePath += url.PathEscape(target)
 	}
+	requestURL.Path, _ = url.PathUnescape(basePath)
+	requestURL.RawPath = basePath
 
-	query := url.Values{}
+	query := requestURL.Query()
 	query.Set("fields", ipAPIFields)
 	query.Set("lang", ipAPILang)
-	if strings.Contains(requestURL, "?") {
-		requestURL = requestURL + "&" + query.Encode()
-	} else {
-		requestURL = requestURL + "?" + query.Encode()
-	}
+	requestURL.RawQuery = query.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
 	if err != nil {
-		entry.Message = err.Error()
+		entry.Message = "无法创建 IP 情报服务请求"
 		return entry
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		entry.Message = err.Error()
+		// Transport errors can include the full URL and its authentication query.
+		entry.Message = "IP 情报服务请求失败或超时"
 		return entry
 	}
 	defer resp.Body.Close()
@@ -305,7 +313,7 @@ func (s *Service) lookup(ctx context.Context, ip string, opts lookupOptions) Ent
 	entry.AS = api.AS
 	entry.ASName = api.ASName
 	entry.Timezone = api.Timezone
-	entry.Source = "ip-api.com"
+	entry.Source = s.apiBaseURL.Hostname()
 	if api.Query != "" {
 		entry.IP = api.Query
 	}

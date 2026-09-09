@@ -43,6 +43,25 @@ docker run -d --network host -v /etc/packLossTester:/app/etc --name pltester kak
 配置文件自动挂载，默认配置文件为`/etc/packLossTester/config.json`
 修改后重启docker容器生效
 
+### IP 属地服务配置
+
+在 `etc/config.json` 中可设置 `ip_api_custom_host`，修改后重启生效：
+
+```json
+{
+  "listen_port": 52611,
+  "ip_api_custom_host": "https://ip.example.com/proxy/json/?key=YOUR_API_KEY"
+}
+```
+
+- 留空或省略时使用 `http://ip-api.com/json/`。自定义地址必须指向 **ip-api 兼容的 JSON API**，不是任意 IP 查询服务；程序不会自动添加 `/json`。
+- 推荐显式使用 `https://`。也接受 `http://`；无 scheme 的 `example.com/json`、`localhost:8080/json` 按 HTTPS 处理。IPv6 主机必须加方括号，例如 `http://[::1]:8080/json/`。
+- 启动时检查 scheme、host、端口及 URL 编码，不联网探测服务。不支持非 HTTP(S) scheme、相对路径或 fragment（`#...`）。
+- 基础路径及查询认证参数会保留，路径末尾有无 `/` 均可。查询指定 IP 时追加一个路径段（支持 IPv4/IPv6）；自动查询服务器出口 IP 时请求基础路径加尾斜杠。
+- 程序设置 `fields=status,message,country,countryCode,region,regionName,city,lat,lon,isp,org,as,asname,query,timezone` 和 `lang=zh-CN`，覆盖同名配置参数；其他查询参数（包括重复的认证参数）保留其值，查询参数顺序和编码形式可能规范化。
+- 服务应返回 HTTP 200 和 ip-api 格式 JSON：成功时 `status` 为 `success`，`query` 为 IP，地理和运营商信息使用 `country`、`regionName`、`city`、`lat`、`lon`、`isp`、`org`、`as`、`asname`、`timezone`；失败时返回 `status: "fail"` 和 `message`。不兼容或缺失 `status` 的响应不视为成功。
+- 返回给前端的成功结果中，`source` 为所配置服务的主机名（默认 `ip-api.com`），不包含端口、路径、用户名或认证查询参数。它标识查询服务，不验证服务返回数据的真实来源。
+
 ## 云服务器配置指南
 
 ### 问题说明
