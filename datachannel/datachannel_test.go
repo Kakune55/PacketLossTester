@@ -1,10 +1,12 @@
 package datachannel
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"testing"
 
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 )
 
 type fakeEchoChannel struct {
@@ -27,13 +29,18 @@ func (d *fakeEchoChannel) SendText(s string) error {
 }
 
 func TestEcho(t *testing.T) {
-	for _, text := range []bool{true, false} {
-		d := &fakeEchoChannel{buffered: MaxEchoBufferedAmount - 3}
-		if err := Echo(d, webrtc.DataChannelMessage{Data: []byte("abc"), IsString: text}); err != nil {
-			t.Fatal(err)
-		}
-		if string(d.sent) != "abc" || d.text != text || d.calls != 1 {
-			t.Fatalf("echo changed payload or type: %+v", d)
+	for _, size := range []int{0, 3, 16*1024 - 1, 16 * 1024} {
+		for _, text := range []bool{true, false} {
+			t.Run(fmt.Sprintf("size=%d/text=%t", size, text), func(t *testing.T) {
+				payload := bytes.Repeat([]byte("x"), size)
+				d := &fakeEchoChannel{buffered: MaxEchoBufferedAmount - uint64(size)}
+				if err := Echo(d, webrtc.DataChannelMessage{Data: payload, IsString: text}); err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(d.sent, payload) || d.text != text || d.calls != 1 {
+					t.Fatalf("echo changed payload/type: size=%d text=%t calls=%d", len(d.sent), d.text, d.calls)
+				}
+			})
 		}
 	}
 }

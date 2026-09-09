@@ -12,19 +12,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
 func rawClient(t *testing.T, handler websocket.Handler) (net.Conn, *bufio.Reader) {
 	t.Helper()
-	s := httptest.NewServer(handler)
+	done := make(chan struct{})
+	s := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {
+		defer close(done)
+		handler(ws)
+	}))
 	t.Cleanup(s.Close)
 	c, err := net.Dial("tcp", strings.TrimPrefix(s.URL, "http://"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { c.Close() })
+	t.Cleanup(func() {
+		c.Close()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("WebSocket handler did not exit")
+		}
+	})
 	c.SetDeadline(time.Now().Add(5 * time.Second))
 	req, _ := http.NewRequest("GET", s.URL, nil)
 	req.Header.Set("Connection", "Upgrade")
@@ -118,6 +129,7 @@ func TestNativePingKeepsIdleSignalingOpen(t *testing.T) {
 }
 
 func TestHandlerCloseCodes(t *testing.T) {
+	configureLocalICE(t)
 	for _, tc := range []struct {
 		name      string
 		oversized bool
@@ -164,6 +176,7 @@ func TestUnregisterConnection(t *testing.T) {
 }
 
 func TestDataChannelLimit(t *testing.T) {
+	configureLocalICE(t)
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		t.Fatal(err)

@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/pion/ice/v2"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/ice/v4"
+	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
@@ -66,6 +66,7 @@ type Config struct {
 func NewPeerConnection(cfg Config) (*webrtc.PeerConnection, error) {
 	// 创建 SettingEngine 以配置 NAT 类型
 	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetSCTPMaxMessageSize(16 * 1024)
 
 	// 如果提供了公网IP或设置了环境变量，则配置 NAT 1to1 映射
 	publicIP := cfg.PublicIP
@@ -102,7 +103,7 @@ func NewPeerConnection(cfg Config) (*webrtc.PeerConnection, error) {
 	})
 
 	// 如果配置了公网IP和端口范围，则不需要STUN服务器
-	webrtcConfig := webrtc.Configuration{ICECandidatePoolSize: 10}
+	webrtcConfig := webrtc.Configuration{}
 	if publicIP != "" && hasUDPPortRange {
 		// 有公网IP和端口范围，不使用STUN
 		log.Println("Using direct connection without STUN (public IP configured)")

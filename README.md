@@ -269,4 +269,4 @@ curl icanhazip.com
 ## 参考资料
 
 - [WebRTC NAT Traversal](https://webrtc.org/getting-started/firewall)
-- [Pion WebRTC SettingEngine](https://pkg.go.dev/github.com/pion/webrtc/v3#SettingEngine)
+- [Pion WebRTC SettingEngine](https://pkg.go.dev/github.com/pion/webrtc/v4#SettingEngine)
