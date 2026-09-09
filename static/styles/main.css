@@ -408,6 +408,22 @@ button:disabled {
     height: auto;
 }
 
+.stats-help {
+    margin-top: 12px;
+    color: var(--ui-muted);
+    font-size: 0.86rem;
+}
+
+.stats-help summary {
+    width: fit-content;
+    cursor: pointer;
+    font-weight: 750;
+}
+
+.stats-help p:last-child {
+    margin-bottom: 0;
+}
+
 .footer {
     margin-top: 24px;
     padding-top: 14px;
