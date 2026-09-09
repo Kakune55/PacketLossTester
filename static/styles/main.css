@@ -539,6 +539,22 @@ button:disabled {
     font-weight: 800;
 }
 
+.case-request-time {
+    display: block;
+    margin-top: 4px;
+    color: var(--ui-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.tips summary {
+    cursor: pointer;
+}
+
+.tips details[open] summary {
+    margin-bottom: 8px;
+}
+
 .progress-trigger {
     position: relative;
     width: 100%;

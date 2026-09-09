@@ -29,18 +29,18 @@
                 <input type="checkbox" id="high-speed-mode">
                 <span>
                     <strong>高速网络模式</strong>
-                    <small>累计数据量 x10，用于内网、大带宽链路</small>
+                    <small>请求次数 x10，单个资源大小不变</small>
                 </span>
             </label>
         </section>
         <section class="metrics">
             <div class="metric">
-                <div class="metric-label">下载速度</div>
+                <div class="metric-label">大资源下载速度</div>
                 <div class="metric-value" id="download-speed">-</div>
                 <div class="metric-label">Mbps</div>
             </div>
             <div class="metric">
-                <div class="metric-label">上传速度</div>
+                <div class="metric-label">大资源上传速度</div>
                 <div class="metric-value" id="upload-speed">-</div>
                 <div class="metric-label">Mbps</div>
             </div>
@@ -51,11 +51,11 @@
             </div>
         </section>
         <section class="cases">
-            <h2>应用层分块场景测速结果</h2>
+            <h2>资源请求测速结果</h2>
             <table class="case-table">
                 <thead>
                     <tr>
-                        <th>应用分块大小</th>
+                        <th>单个资源大小 / 场景</th>
                         <th>下载速度 (Mbps)</th>
                         <th>上传速度 (Mbps)</th>
                     </tr>
@@ -72,11 +72,14 @@
         </button>
         <button id="cancel-test" hidden>取消测速</button>
         <section class="tips">
-            <p>提示：</p>
-            <p>测速保留 100 KB、500 KB、1 MB、10 MB 应用分块场景（单场景约 30 MB），以及 100 MB 下载 / 30 MB 上传的大流量场景。</p>
-            <p>分块指下载服务端的逻辑写入批次或上传 Blob 的构造片段，不是 TCP/IP 包或 MTU；实际写入最多 1 MB，浏览器及网络可重新分段。每场景上传为单次请求，结果不代表不同 IP 包大小的性能对比。单次传输服务端限时 2 分钟，慢速网络或高速模式可能超时。</p>
             <p id="traffic-summary">单次测速将产生约 220 MB 下载 + 150 MB 上传流量。</p>
-            <p>请提前确认网络流量计划与带宽占用；建议在测试期间关闭占用带宽的应用，并多次测试取平均值。</p>
+            <p>每个资源独立请求，串行重复测试；结果同时展示有效传输速度与单资源平均耗时。</p>
+            <details>
+                <summary>测试说明</summary>
+                <p>100 KB 对应代码资源体积，500 KB 对应小图片，1 MB 对应大图片，10 MB 对应文件。每个场景上下行各累计约 30 MB，按完整资源数量向上取整；另有单资源 100 MB 下载 / 30 MB 上传作为吞吐参考。大小按 1024 进制计算。</p>
+                <p>HTTP/2 可以复用连接，但每个资源仍是独立请求。耗时包含请求及响应完成的开销；使用禁用缓存的测试载荷，不模拟实际脚本执行、图片解码、页面并发加载或渲染。</p>
+                <p>高速模式增加请求次数，不放大资源。单个请求服务端限时 2 分钟，整场可能更久，可随时取消。请确认流量计划，并关闭其他占用带宽的应用。</p>
+            </details>
         </section>
     </main>
     <script src="/js/nodes.js"></script>
