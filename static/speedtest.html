@@ -43,11 +43,11 @@
             </div>
         </section>
         <section class="cases">
-            <h2>不同数据包大小的测速结果</h2>
+            <h2>应用层分块场景测速结果</h2>
             <table class="case-table">
                 <thead>
                     <tr>
-                        <th>数据包大小</th>
+                        <th>应用分块大小</th>
                         <th>下载速度 (Mbps)</th>
                         <th>上传速度 (Mbps)</th>
                     </tr>
@@ -62,9 +62,11 @@
             <span class="progress-label" id="progress-label">开始测速</span>
             <span class="progress-hint" id="progress-hint">点击启动全流程带宽测试</span>
         </button>
+        <button id="cancel-test" hidden>取消测速</button>
         <section class="tips">
             <p>提示：</p>
-            <p>测速会针对 100 KB、500 KB、1 MB、10 MB 四种数据包场景分别进行上下行测试（单场景约 30 MB 数据量），并额外执行 100 MB 下载 / 30 MB 上传的极限大包测试。</p>
+            <p>测速保留 100 KB、500 KB、1 MB、10 MB 应用分块场景（单场景约 30 MB），以及 100 MB 下载 / 30 MB 上传的大流量场景。</p>
+            <p>分块指下载服务端的逻辑写入批次或上传 Blob 的构造片段，不是 TCP/IP 包或 MTU；实际写入最多 1 MB，浏览器及网络可重新分段。每场景上传为单次请求，结果不代表不同 IP 包大小的性能对比。单次传输服务端限时 2 分钟，慢速网络或高速模式可能超时。</p>
             <p id="traffic-summary">单次测速将产生约 220 MB 下载 + 150 MB 上传流量。</p>
             <p>请提前确认网络流量计划与带宽占用；建议在测试期间关闭占用带宽的应用，并多次测试取平均值。</p>
         </section>

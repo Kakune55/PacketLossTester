@@ -14,42 +14,71 @@ const STANDARD_TOTAL_BYTES = 30 * 1024 * 1024; // 常规场景保持约 30 MB �
 const PEAK_DOWNLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
 const PEAK_UPLOAD_TOTAL_BYTES = 30 * 1024 * 1024;
 const HIGH_SPEED_MULTIPLIER = 10;
+const REQUEST_TIMEOUT_MS = 125_000;
+let activeController = null;
+let activeXHR = null;
+let lastProgressRender = 0;
+
+const cancelRequests = () => {
+    activeController?.abort();
+    activeXHR?.abort();
+};
+window.addEventListener("pagehide", cancelRequests);
+document.getElementById("cancel-test").addEventListener("click", cancelRequests);
+
+const withTimedFetch = async (url, consume, timeout = REQUEST_TIMEOUT_MS) => {
+    const controller = new AbortController();
+    activeController = controller;
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+        const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error(`测速请求失败 (${response.status})`);
+        return await consume(response);
+    } catch (error) {
+        if (controller.signal.aborted) throw new Error("请求已取消或超时");
+        throw error;
+    } finally {
+        controller.abort();
+        clearTimeout(timer);
+        activeController = null;
+    }
+};
 
 const BASE_TEST_CASES = [
     {
         key: "100kb",
         label: "100 KB",
         displayLabel: "100 KB",
-        download: { packetBytes: 100 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
-        upload: { packetBytes: 100 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
+        download: { chunkBytes: 100 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
+        upload: { chunkBytes: 100 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
     },
     {
         key: "500kb",
         label: "500 KB",
         displayLabel: "500 KB",
-        download: { packetBytes: 500 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
-        upload: { packetBytes: 500 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
+        download: { chunkBytes: 500 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
+        upload: { chunkBytes: 500 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
     },
     {
         key: "1mb",
         label: "1 MB",
         displayLabel: "1 MB",
-        download: { packetBytes: 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
-        upload: { packetBytes: 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
+        download: { chunkBytes: 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
+        upload: { chunkBytes: 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
     },
     {
         key: "10mb",
         label: "10 MB",
         displayLabel: "10 MB",
-        download: { packetBytes: 10 * 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
-        upload: { packetBytes: 10 * 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
+        download: { chunkBytes: 10 * 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
+        upload: { chunkBytes: 10 * 1024 * 1024, totalBytes: STANDARD_TOTAL_BYTES },
     },
     {
         key: "peak",
-        label: "极限大包",
+        label: "大流量场景",
         displayLabel: "下载 100 MB / 上传 30 MB",
-        download: { packetBytes: PEAK_DOWNLOAD_TOTAL_BYTES, totalBytes: PEAK_DOWNLOAD_TOTAL_BYTES },
-        upload: { packetBytes: PEAK_UPLOAD_TOTAL_BYTES, totalBytes: PEAK_UPLOAD_TOTAL_BYTES },
+        download: { chunkBytes: PEAK_DOWNLOAD_TOTAL_BYTES, totalBytes: PEAK_DOWNLOAD_TOTAL_BYTES },
+        upload: { chunkBytes: PEAK_UPLOAD_TOTAL_BYTES, totalBytes: PEAK_UPLOAD_TOTAL_BYTES },
     },
 ];
 
@@ -212,6 +241,9 @@ const resetProgress = () => {
 
 const recordTransferProgress = (bytes) => {
     completedProgressUnits = Math.min(totalProgressUnits, completedProgressUnits + Math.max(0, bytes));
+    const now = performance.now();
+    if (now - lastProgressRender < 100) return;
+    lastProgressRender = now;
     updateProgressState("running", {
         completed: completedStages,
         nextStage: stageDescriptions[Math.min(completedStages, totalStages - 1)],
@@ -276,52 +308,39 @@ const measureLatency = async () => {
     let total = 0;
     for (let i = 0; i < attempts; i++) {
         const start = performance.now();
-        const response = await fetch(`/speedtest/ping?ts=${Date.now()}`, { cache: "no-store" });
-        if (!response.ok) {
-            throw new Error("Ping 请求失败");
-        }
-        await response.json();
+        await withTimedFetch(`/speedtest/ping?ts=${Date.now()}`, (response) => response.json(), 10_000);
         total += performance.now() - start;
     }
     return total / attempts;
 };
 
-const runDownloadTest = async (packetBytes, totalBytes, onProgress) => {
-    const packetSize = Math.max(1, Math.floor(packetBytes));
-    // 保证每个场景传输的总数据量为 totalBytes（由调用者传入），避免小包场景只测一次导致突发性能。
+const runDownloadTest = async (chunkBytes, totalBytes, onProgress) => {
+    const chunkSize = Math.max(64 * 1024, Math.floor(chunkBytes));
     const targetBytes = Math.max(1, Math.floor(totalBytes));
     let receivedTotal = 0;
     const start = performance.now();
-    const response = await fetch(`/speedtest/download?bytes=${targetBytes}&chunk=${packetSize}`, {
-        cache: "no-store",
-    });
-    if (!response.ok) {
-        throw new Error("下载测试请求失败");
-    }
-
-    if (response.body && response.body.getReader) {
-        const reader = response.body.getReader();
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) {
-                break;
+    await withTimedFetch(`/speedtest/download?bytes=${targetBytes}&chunk=${chunkSize}`, async (response) => {
+        if (response.body && response.body.getReader) {
+            const reader = response.body.getReader();
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    receivedTotal += value.length;
+                    onProgress?.(value.length);
+                }
+            } finally {
+                reader.releaseLock();
             }
-            if (value) {
-                receivedTotal += value.length;
-                onProgress?.(value.length);
-            }
+        } else {
+            const buffer = await response.arrayBuffer();
+            receivedTotal += buffer.byteLength;
+            onProgress?.(buffer.byteLength);
         }
-    } else {
-        const buffer = await response.arrayBuffer();
-        receivedTotal += buffer.byteLength;
-        onProgress?.(buffer.byteLength);
-    }
-
+    });
+    if (receivedTotal !== targetBytes) throw new Error("下载数据不完整");
     const durationSec = (performance.now() - start) / 1000;
-    if (durationSec <= 0) {
-        return NaN;
-    }
-    return (receivedTotal * 8) / durationSec / 1_000_000;
+    return durationSec <= 0 ? NaN : (receivedTotal * 8) / durationSec / 1_000_000;
 };
 
 const fillRandomBytes = (target) => {
@@ -338,22 +357,22 @@ const fillRandomBytes = (target) => {
     }
 };
 
-const getUploadPayload = (packetBytes) => {
-    const packetSize = Math.max(1, Math.floor(packetBytes));
-    const cached = uploadPayloadCache.get(packetSize);
+const getUploadPayload = (chunkBytes) => {
+    const chunkSize = Math.max(1, Math.floor(chunkBytes));
+    const cached = uploadPayloadCache.get(chunkSize);
     if (cached) {
         return cached;
     }
 
-    const payload = new Uint8Array(packetSize);
+    const payload = new Uint8Array(chunkSize);
     fillRandomBytes(payload);
-    uploadPayloadCache.set(packetSize, payload);
+    uploadPayloadCache.set(chunkSize, payload);
     return payload;
 };
 
 const prepareUploadPayloads = (testCases) => {
     for (const testCase of testCases) {
-        getUploadPayload(testCase.upload.packetBytes);
+        getUploadPayload(testCase.upload.chunkBytes);
     }
 };
 
@@ -361,23 +380,26 @@ const createUploadBlob = (payload, totalBytes) => {
     const parts = [];
     let remaining = totalBytes;
     while (remaining > 0) {
-        const chunkBytes = Math.min(payload.byteLength, remaining);
-        parts.push(chunkBytes === payload.byteLength ? payload : payload.subarray(0, chunkBytes));
+        const chunkBytes = Math.min(payload.size, remaining);
+        parts.push(chunkBytes === payload.size ? payload : payload.slice(0, chunkBytes));
         remaining -= chunkBytes;
     }
     return new Blob(parts, { type: "application/octet-stream" });
 };
 
-const runBlobUploadTest = async (packetSize, totalBytes, onProgress) => {
-    const payload = getUploadPayload(packetSize);
+const runUploadTest = async (chunkSize, totalBytes, onProgress) => {
+    const payload = new Blob([getUploadPayload(chunkSize)]);
     const body = createUploadBlob(payload, totalBytes);
 
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
+        activeXHR = xhr;
         let reportedBytes = 0;
         const start = performance.now();
 
         xhr.open("POST", "/speedtest/upload", true);
+        xhr.timeout = REQUEST_TIMEOUT_MS;
+        xhr.onloadend = () => { activeXHR = null; };
         xhr.setRequestHeader("Content-Type", "application/octet-stream");
         xhr.responseType = "json";
         xhr.upload.onprogress = (event) => {
@@ -394,10 +416,11 @@ const runBlobUploadTest = async (packetSize, totalBytes, onProgress) => {
                 return;
             }
 
-            const result = typeof xhr.response === "object" && xhr.response !== null
-                ? xhr.response
-                : JSON.parse(xhr.responseText || "{}");
-            const uploadedTotal = typeof result.receivedBytes === "number" ? result.receivedBytes : totalBytes;
+            const uploadedTotal = xhr.response?.receivedBytes;
+            if (uploadedTotal !== totalBytes) {
+                reject(new Error("上传响应无效或数据不完整"));
+                return;
+            }
             if (reportedBytes < uploadedTotal) {
                 onProgress?.(uploadedTotal - reportedBytes);
             }
@@ -407,108 +430,9 @@ const runBlobUploadTest = async (packetSize, totalBytes, onProgress) => {
         };
         xhr.onerror = () => reject(new Error("上传测试请求失败"));
         xhr.ontimeout = () => reject(new Error("上传测试请求超时"));
+        xhr.onabort = () => reject(new Error("上传测试已取消"));
         xhr.send(body);
     });
-};
-
-const createUploadStream = (payload, totalBytes, onProgress) => {
-    let remaining = totalBytes;
-    return new ReadableStream({
-        pull(controller) {
-            if (remaining <= 0) {
-                controller.close();
-                return;
-            }
-
-            const chunkBytes = Math.min(payload.byteLength, remaining);
-            const body = chunkBytes === payload.byteLength ? payload : payload.subarray(0, chunkBytes);
-            remaining -= chunkBytes;
-            onProgress?.(chunkBytes);
-            controller.enqueue(body);
-        },
-    });
-};
-
-const runStreamingUploadTest = async (packetSize, totalBytes, onProgress) => {
-    const payload = getUploadPayload(packetSize);
-    const stream = createUploadStream(payload, totalBytes, onProgress);
-    const start = performance.now();
-    const response = await fetch("/speedtest/upload", {
-        method: "POST",
-        body: stream,
-        duplex: "half",
-        headers: {
-            "Content-Type": "application/octet-stream",
-        },
-    });
-    if (!response.ok) {
-        throw new Error("上传测试请求失败");
-    }
-
-    const result = await response.json();
-    const uploadedTotal = typeof result.receivedBytes === "number" ? result.receivedBytes : totalBytes;
-    const durationSec = (performance.now() - start) / 1000;
-    if (durationSec <= 0) {
-        return NaN;
-    }
-    return (uploadedTotal * 8) / durationSec / 1_000_000;
-};
-
-const runChunkedUploadTest = async (packetSize, totalBytes, onProgress) => {
-    const payload = getUploadPayload(packetSize);
-    let remaining = totalBytes;
-    let uploadedTotal = 0;
-    const start = performance.now();
-
-    while (remaining > 0) {
-        const chunkBytes = Math.min(packetSize, remaining);
-        const body = chunkBytes === payload.byteLength ? payload : payload.subarray(0, chunkBytes);
-
-        const response = await fetch("/speedtest/upload", {
-            method: "POST",
-            body,
-            headers: {
-                "Content-Type": "application/octet-stream",
-            },
-        });
-        if (!response.ok) {
-            throw new Error("上传测试请求失败");
-        }
-        const result = await response.json();
-        uploadedTotal += typeof result.receivedBytes === "number" ? result.receivedBytes : chunkBytes;
-
-        remaining -= chunkBytes;
-        onProgress?.(chunkBytes);
-    }
-
-    const durationSec = (performance.now() - start) / 1000;
-    if (durationSec <= 0) {
-        return NaN;
-    }
-    return (uploadedTotal * 8) / durationSec / 1_000_000;
-};
-
-const runUploadTest = async (packetBytes, totalBytes, onProgress) => {
-    const packetSize = Math.max(1, Math.floor(packetBytes));
-    // 保证每个场景传输的总数据量为 totalBytes（由调用者传入），避免小包场景只测一次导致突发性能。
-    const targetBytes = Math.max(1, Math.floor(totalBytes));
-
-    if (window.XMLHttpRequest && window.Blob) {
-        return runBlobUploadTest(packetSize, targetBytes, onProgress);
-    }
-
-    if (window.ReadableStream) {
-        try {
-            return await runStreamingUploadTest(packetSize, targetBytes, onProgress);
-        } catch (error) {
-            if (!(error instanceof TypeError)) {
-                throw error;
-            }
-            console.warn("Streaming upload is not available; falling back to chunked requests.", error);
-        }
-    }
-
-    return runChunkedUploadTest(packetSize, targetBytes, onProgress);
 };
 
 initializeCaseTable();
@@ -528,6 +452,7 @@ startBtn.addEventListener("click", async () => {
     }
     startBtn.blur();
     startBtn.disabled = true;
+    document.getElementById("cancel-test").hidden = false;
     if (highSpeedModeEl) {
         highSpeedModeEl.disabled = true;
     }
@@ -558,8 +483,8 @@ startBtn.addEventListener("click", async () => {
             announceStageStart();
             const label = testCase.displayLabel ?? testCase.label;
             setStatus(`测试下载速度（${label}）...`);
-            const { packetBytes, totalBytes } = testCase.download;
-            const downloadMbps = await runDownloadTest(packetBytes, totalBytes, recordTransferProgress);
+            const { chunkBytes, totalBytes } = testCase.download;
+            const downloadMbps = await runDownloadTest(chunkBytes, totalBytes, recordTransferProgress);
             downloadResults.set(testCase.key, downloadMbps);
             setCaseResult(testCase.key, "download", downloadMbps);
             markStageComplete();
@@ -570,8 +495,8 @@ startBtn.addEventListener("click", async () => {
             announceStageStart();
             const label = testCase.displayLabel ?? testCase.label;
             setStatus(`测试上传速度（${label}）...`);
-            const { packetBytes, totalBytes } = testCase.upload;
-            const uploadMbps = await runUploadTest(packetBytes, totalBytes, recordTransferProgress);
+            const { chunkBytes, totalBytes } = testCase.upload;
+            const uploadMbps = await runUploadTest(chunkBytes, totalBytes, recordTransferProgress);
             uploadResults.set(testCase.key, uploadMbps);
             setCaseResult(testCase.key, "upload", uploadMbps);
             markStageComplete();
@@ -586,6 +511,9 @@ startBtn.addEventListener("click", async () => {
         updateProgressState("error", { message: error.message });
         setStatus(`测速失败：${error.message}`);
     } finally {
+        cancelRequests();
+        uploadPayloadCache.clear();
+        document.getElementById("cancel-test").hidden = true;
         startBtn.disabled = false;
         if (highSpeedModeEl) {
             highSpeedModeEl.disabled = false;

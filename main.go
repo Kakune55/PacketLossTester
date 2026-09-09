@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"time"
 
 	"pltester/config"
 	"pltester/ipinfo"
@@ -81,7 +82,13 @@ func main() {
 	log.Println("Open http://localhost:" + fmt.Sprint(cfg.ListenPort) + " in your browser")
 	log.Println("LAN Address: http://" + getLocalIP() + ":" + fmt.Sprint(cfg.ListenPort))
 	log.Println("Press Ctrl+C to stop the server")
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", cfg.ListenPort), handler))
+	server := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.ListenPort),
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
