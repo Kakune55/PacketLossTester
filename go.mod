@@ -1,6 +1,8 @@
 module pltester
 
-go 1.26.8
+go 1.26.9
+
+toolchain go1.27.2
 
 require (
 	github.com/pion/ice/v4 v4.4.4
