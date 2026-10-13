@@ -1,11 +1,11 @@
 module pltester
 
-go 1.26.8
+go 1.26.9
 
 require (
 	github.com/pion/ice/v4 v4.4.4
 	github.com/pion/webrtc/v4 v4.2.22
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 )
 
 require (
