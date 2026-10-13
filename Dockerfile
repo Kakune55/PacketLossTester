@@ -1,5 +1,5 @@
 # 使用官方的 Go 运行时作为父镜像
-FROM golang:1.26.8-alpine AS builder
+FROM golang:1.27.0-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app
@@ -13,7 +13,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o main .
 
 # 使用 Alpine 基础镜像来运行应用，减少最终镜像大小
-FROM alpine:3.23
+FROM alpine:3.24
 
 # 安装运行时依赖
 RUN apk add --no-cache ca-certificates
